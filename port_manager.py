@@ -17,8 +17,14 @@ class PortManagerGUI:
     def __init__(self, root):
         self.root = root
         self.root.title("端口管理工具")
-        self.root.geometry("800x600")
+        self.root.geometry("900x700")
         self.root.resizable(True, True)
+
+        # 设置主题色彩
+        self.root.configure(bg='#f0f0f0')
+
+        # 设置最小窗口大小
+        self.root.minsize(800, 600)
 
         # 设置图标（如果有的话）
         try:
@@ -27,11 +33,80 @@ class PortManagerGUI:
         except:
             pass
 
+        # 自定义样式
+        self.setup_styles()
+
         self.setup_ui()
+
+    def setup_styles(self):
+        """设置自定义样式"""
+        style = ttk.Style()
+
+        # 配置主题
+        style.theme_use('clam')
+
+        # 自定义按钮样式
+        style.configure('Action.TButton',
+                       background='#4CAF50',
+                       foreground='white',
+                       borderwidth=0,
+                       focuscolor='none',
+                       font=('Microsoft YaHei UI', 9, 'bold'))
+        style.map('Action.TButton',
+                 background=[('active', '#45a049'),
+                           ('pressed', '#3d8b40')])
+
+        style.configure('Danger.TButton',
+                       background='#f44336',
+                       foreground='white',
+                       borderwidth=0,
+                       focuscolor='none',
+                       font=('Microsoft YaHei UI', 9, 'bold'))
+        style.map('Danger.TButton',
+                 background=[('active', '#da190b'),
+                           ('pressed', '#b71c1c')])
+
+        style.configure('Info.TButton',
+                       background='#2196F3',
+                       foreground='white',
+                       borderwidth=0,
+                       focuscolor='none',
+                       font=('Microsoft YaHei UI', 9, 'bold'))
+        style.map('Info.TButton',
+                 background=[('active', '#0b7dda'),
+                           ('pressed', '#0a58ca')])
+
+        style.configure('Warning.TButton',
+                       background='#FF9800',
+                       foreground='white',
+                       borderwidth=0,
+                       focuscolor='none',
+                       font=('Microsoft YaHei UI', 9, 'bold'))
+        style.map('Warning.TButton',
+                 background=[('active', '#e68900'),
+                           ('pressed', '#cc7a00')])
+
+        # 配置输入框样式
+        style.configure('Custom.TEntry',
+                       fieldbackground='white',
+                       borderwidth=1,
+                       relief='solid',
+                       font=('Microsoft YaHei UI', 10))
+
+        # 配置框架样式
+        style.configure('Card.TLabelframe',
+                       background='white',
+                       relief='solid',
+                       borderwidth=1)
+
+        style.configure('Card.TLabelframe.Label',
+                       background='white',
+                       foreground='#333333',
+                       font=('Microsoft YaHei UI', 10, 'bold'))
 
     def setup_ui(self):
         # 主框架
-        main_frame = ttk.Frame(self.root, padding="10")
+        main_frame = ttk.Frame(self.root, padding="15")
         main_frame.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
 
         # 配置网格权重
@@ -40,85 +115,149 @@ class PortManagerGUI:
         main_frame.columnconfigure(0, weight=1)
         main_frame.rowconfigure(2, weight=1)
 
-        # 标题
-        title_label = ttk.Label(main_frame, text="端口管理工具", font=("Arial", 16, "bold"))
-        title_label.grid(row=0, column=0, pady=(0, 20))
+        # 标题区域
+        title_frame = ttk.Frame(main_frame)
+        title_frame.grid(row=0, column=0, sticky=(tk.W, tk.E), pady=(0, 25))
 
-        # 输入区域
-        input_frame = ttk.LabelFrame(main_frame, text="端口操作", padding="10")
-        input_frame.grid(row=1, column=0, sticky=(tk.W, tk.E), pady=(0, 10))
-        input_frame.columnconfigure(1, weight=1)
+        title_label = tk.Label(title_frame, text="🔌 端口管理工具",
+                               font=('Microsoft YaHei UI', 20, 'bold'),
+                               fg='#2196F3', bg='#f0f0f0')
+        title_label.pack()
+
+        subtitle_label = tk.Label(title_frame, text="查询端口占用 • 管理进程 • 一键终止",
+                                 font=('Microsoft YaHei UI', 10),
+                                 fg='#666666', bg='#f0f0f0')
+        subtitle_label.pack(pady=(5, 0))
+
+        # 操作区域容器
+        action_container = ttk.Frame(main_frame)
+        action_container.grid(row=1, column=0, sticky=(tk.W, tk.E), pady=(0, 15))
+        action_container.columnconfigure(0, weight=1)
+        action_container.columnconfigure(1, weight=1)
+
+        # 端口操作区域
+        port_frame = ttk.LabelFrame(action_container, text="🔍 端口操作", padding="15", style='Card.TLabelframe')
+        port_frame.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S), padx=(0, 8))
+        port_frame.columnconfigure(1, weight=1)
 
         # 端口输入
-        ttk.Label(input_frame, text="端口号:").grid(row=0, column=0, sticky=tk.W, padx=(0, 10))
-        self.port_entry = ttk.Entry(input_frame, width=20)
-        self.port_entry.grid(row=0, column=1, sticky=(tk.W, tk.E), padx=(0, 10))
+        ttk.Label(port_frame, text="端口号:", font=('Microsoft YaHei UI', 10)).grid(row=0, column=0, sticky=tk.W, padx=(0, 12), pady=8)
+        self.port_entry = ttk.Entry(port_frame, width=25, style='Custom.TEntry')
+        self.port_entry.grid(row=0, column=1, sticky=(tk.W, tk.E), padx=(0, 15), pady=8)
         self.port_entry.bind('<Return>', lambda e: self.query_port())
 
-        # 按钮区域
-        button_frame = ttk.Frame(input_frame)
-        button_frame.grid(row=0, column=2, sticky=(tk.W, tk.E))
+        # 端口操作按钮
+        port_button_frame = ttk.Frame(port_frame)
+        port_button_frame.grid(row=1, column=0, columnspan=2, sticky=(tk.W, tk.E), pady=(10, 0))
 
-        self.query_btn = ttk.Button(button_frame, text="查询端口", command=self.query_port)
-        self.query_btn.pack(side=tk.LEFT, padx=(0, 5))
+        self.query_btn = ttk.Button(port_button_frame, text="🔍 查询端口",
+                                   command=self.query_port, style='Action.TButton', width=15)
+        self.query_btn.pack(side=tk.LEFT, padx=(0, 10))
 
-        self.kill_btn = ttk.Button(button_frame, text="终止进程", command=self.kill_process)
-        self.kill_btn.pack(side=tk.LEFT, padx=(0, 5))
+        self.kill_btn = ttk.Button(port_button_frame, text="⚠️ 终止进程",
+                                  command=self.kill_process, style='Danger.TButton', width=15)
+        self.kill_btn.pack(side=tk.LEFT, padx=(0, 10))
 
-        self.refresh_btn = ttk.Button(button_frame, text="刷新", command=self.refresh_all)
-        self.refresh_btn.pack(side=tk.LEFT, padx=(0, 5))
+        self.refresh_btn = ttk.Button(port_button_frame, text="🔄 刷新列表",
+                                     command=self.refresh_all, style='Info.TButton', width=15)
+        self.refresh_btn.pack(side=tk.LEFT)
+
+        # PID快速操作区域
+        pid_frame = ttk.LabelFrame(action_container, text="⚡ PID快速操作", padding="15", style='Card.TLabelframe')
+        pid_frame.grid(row=0, column=1, sticky=(tk.W, tk.E, tk.N, tk.S), padx=(8, 0))
+        pid_frame.columnconfigure(1, weight=1)
+
+        # PID输入
+        ttk.Label(pid_frame, text="PID:", font=('Microsoft YaHei UI', 10)).grid(row=0, column=0, sticky=tk.W, padx=(0, 12), pady=8)
+        self.pid_entry = ttk.Entry(pid_frame, width=20, style='Custom.TEntry')
+        self.pid_entry.grid(row=0, column=1, sticky=(tk.W, tk.E), padx=(0, 15), pady=8)
+
+        # PID操作按钮
+        pid_button_frame = ttk.Frame(pid_frame)
+        pid_button_frame.grid(row=1, column=0, columnspan=2, sticky=(tk.W, tk.E), pady=(10, 0))
+
+        self.extract_pid_btn = ttk.Button(pid_button_frame, text="📋 提取PID",
+                                         command=self.extract_pid, style='Info.TButton', width=14)
+        self.extract_pid_btn.pack(side=tk.LEFT, padx=(0, 8))
+
+        self.kill_pid_btn = ttk.Button(pid_button_frame, text="🗑️ 快速杀掉",
+                                      command=self.kill_by_pid, style='Danger.TButton', width=14)
+        self.kill_pid_btn.pack(side=tk.LEFT, padx=(0, 8))
+
+        self.copy_pid_btn = ttk.Button(pid_button_frame, text="📝 复制PID",
+                                      command=self.copy_pid, style='Warning.TButton', width=14)
+        self.copy_pid_btn.pack(side=tk.LEFT)
 
         # 显示区域
-        display_frame = ttk.LabelFrame(main_frame, text="结果显示", padding="10")
+        display_frame = ttk.LabelFrame(main_frame, text="📊 操作结果", padding="15", style='Card.TLabelframe')
         display_frame.grid(row=2, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
         display_frame.columnconfigure(0, weight=1)
         display_frame.rowconfigure(0, weight=1)
 
         # 结果文本框
-        self.result_text = scrolledtext.ScrolledText(display_frame, wrap=tk.WORD, height=20)
+        self.result_text = scrolledtext.ScrolledText(
+            display_frame,
+            wrap=tk.WORD,
+            height=18,
+            font=('Consolas', 9),
+            bg='#1e1e1e',
+            fg='#d4d4d4',
+            insertbackground='#d4d4d4',
+            selectbackground='#264f78',
+            relief='flat',
+            borderwidth=1
+        )
         self.result_text.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
 
         # 配置文本样式
-        self.result_text.tag_config("header", font=("Arial", 10, "bold"))
-        self.result_text.tag_config("success", foreground="green")
-        self.result_text.tag_config("error", foreground="red")
-        self.result_text.tag_config("info", foreground="blue")
-        self.result_text.tag_config("pid", background="yellow", foreground="black")
+        self.result_text.tag_config("header", font=('Microsoft YaHei UI', 11, 'bold'), foreground='#569cd6')
+        self.result_text.tag_config("success", foreground='#4ec9b0')
+        self.result_text.tag_config("error", foreground='#f44747')
+        self.result_text.tag_config("info", foreground='#9cdcfe')
+        self.result_text.tag_config("warning", foreground='#dcdcaa')
+        self.result_text.tag_config("pid", background='#264f78', foreground='#ffffff', font=('Consolas', 10, 'bold'))
 
-        # PID操作区域
-        pid_frame = ttk.LabelFrame(main_frame, text="PID快速操作", padding="10")
-        pid_frame.grid(row=3, column=0, sticky=(tk.W, tk.E), pady=(10, 0))
-        pid_frame.columnconfigure(1, weight=1)
-
-        # PID输入和提取
-        ttk.Label(pid_frame, text="PID:").grid(row=0, column=0, sticky=tk.W, padx=(0, 10))
-        self.pid_entry = ttk.Entry(pid_frame, width=15)
-        self.pid_entry.grid(row=0, column=1, sticky=(tk.W, tk.E), padx=(0, 10))
-
-        # PID操作按钮
-        pid_button_frame = ttk.Frame(pid_frame)
-        pid_button_frame.grid(row=0, column=2, sticky=(tk.W, tk.E))
-
-        self.extract_pid_btn = ttk.Button(pid_button_frame, text="提取PID", command=self.extract_pid)
-        self.extract_pid_btn.pack(side=tk.LEFT, padx=(0, 5))
-
-        self.kill_pid_btn = ttk.Button(pid_button_frame, text="快速杀掉", command=self.kill_by_pid)
-        self.kill_pid_btn.pack(side=tk.LEFT, padx=(0, 5))
-
-        self.copy_pid_btn = ttk.Button(pid_button_frame, text="复制PID", command=self.copy_pid)
-        self.copy_pid_btn.pack(side=tk.LEFT, padx=(0, 5))
+        # 添加一些帮助文本
+        help_text = "💡 提示: 输入端口号查询占用情况，使用PID快速操作区域进行进程管理\n"
+        self.result_text.insert(tk.END, help_text, "info")
 
         # 存储查询到的PID
         self.current_pids = []
 
         # 状态栏
+        status_container = ttk.Frame(main_frame)
+        status_container.grid(row=3, column=0, sticky=(tk.W, tk.E), pady=(15, 0))
+        status_container.columnconfigure(0, weight=1)
+
         self.status_var = tk.StringVar()
-        self.status_var.set("就绪")
-        status_bar = ttk.Label(main_frame, textvariable=self.status_var, relief=tk.SUNKEN)
-        status_bar.grid(row=4, column=0, sticky=(tk.W, tk.E), pady=(10, 0))
+        self.status_var.set("✅ 就绪 - 可以开始操作")
+
+        # 状态标签
+        status_label = tk.Label(
+            status_container,
+            textvariable=self.status_var,
+            font=('Microsoft YaHei UI', 9),
+            fg='#2196F3',
+            bg='#f0f0f0',
+            relief='flat',
+            pady=8
+        )
+        status_label.grid(row=0, column=0, sticky=(tk.W, tk.E))
 
         # 初始化时显示所有端口
         self.refresh_all()
+
+        # 设置焦点
+        self.port_entry.focus_set()
+
+        # 绑定回车键快速操作
+        self.pid_entry.bind('<Return>', lambda e: self.kill_by_pid())
+
+        # 绑定快捷键
+        self.root.bind('<Control-r>', lambda e: self.refresh_all())
+        self.root.bind('<F5>', lambda e: self.refresh_all())
+        self.root.bind('<Control-q>', lambda e: self.root.quit())
+        self.root.bind('<F1>', lambda e: self.show_about())
 
     def log_message(self, message, tag="normal"):
         """在结果框中添加消息"""
@@ -132,7 +271,17 @@ class PortManagerGUI:
 
     def update_status(self, status):
         """更新状态栏"""
-        self.status_var.set(status)
+        # 添加状态图标
+        if "就绪" in status or "完成" in status or "成功" in status:
+            icon = "✅"
+        elif "正在" in status or "查询" in status or "终止" in status:
+            icon = "🔄"
+        elif "错误" in status or "失败" in status or "警告" in status:
+            icon = "⚠️"
+        else:
+            icon = "ℹ️"
+
+        self.status_var.set(f"{icon} {status}")
         self.root.update_idletasks()
 
     def validate_port(self, port_str):
@@ -166,7 +315,8 @@ class PortManagerGUI:
         """在线程中查询端口"""
         self.clear_results()
         self.update_status(f"正在查询端口 {port}...")
-        self.log_message(f"=== 查询端口 {port} ===", "header")
+        self.log_message(f"🔍 查询端口 {port}", "header")
+        self.log_message("=" * 60, "header")
 
         try:
             # 使用 netstat 查询端口
@@ -189,22 +339,22 @@ class PortManagerGUI:
                             # 存储PID
                             self.current_pids.append(pid)
 
-                            self.log_message(f"本地地址: {local_address}", "info")
-                            self.log_message(f"远程地址: {foreign_address}")
-                            self.log_message(f"状态: {state}")
-                            self.log_message(f"PID: ", "info")
+                            self.log_message(f"📍 本地地址: {local_address}", "info")
+                            self.log_message(f"🌐 远程地址: {foreign_address}")
+                            self.log_message(f"📊 连接状态: {state}")
+                            self.log_message(f"🆔 进程PID: ", "info")
                             self.result_text.insert(tk.END, f"{pid}\n", "pid")
 
                             # 获取进程信息
                             try:
                                 process = psutil.Process(int(pid))
-                                self.log_message(f"进程名称: {process.name()}")
-                                self.log_message(f"进程路径: {process.exe()}")
-                                self.log_message(f"命令行: {' '.join(process.cmdline())}")
+                                self.log_message(f"🏷️  进程名称: {process.name()}", "warning")
+                                self.log_message(f"📁 进程路径: {process.exe()}")
+                                self.log_message(f"💻 命令行: {' '.join(process.cmdline())}")
                             except (psutil.NoSuchProcess, psutil.AccessDenied):
-                                self.log_message("无法获取进程详细信息", "error")
+                                self.log_message("⚠️  无法获取进程详细信息", "error")
 
-                            self.log_message("-" * 50)
+                            self.log_message("─" * 60, "info")
 
                 if not found:
                     self.log_message(f"端口 {port} 当前未被占用", "success")
@@ -325,7 +475,8 @@ class PortManagerGUI:
         """在线程中刷新所有端口"""
         self.clear_results()
         self.update_status("正在获取所有端口信息...")
-        self.log_message("=== 所有监听端口 ===", "header")
+        self.log_message("🔄 所有监听端口列表", "header")
+        self.log_message("=" * 60, "header")
 
         try:
             # 使用 netstat 获取所有监听端口
@@ -350,15 +501,15 @@ class PortManagerGUI:
                     # 按端口号排序
                     listening_ports.sort(key=lambda x: int(x[0]) if x[0].isdigit() else 0)
 
-                    self.log_message(f"共找到 {len(listening_ports)} 个监听端口:\n", "info")
+                    self.log_message(f"📊 共找到 {len(listening_ports)} 个监听端口:\n", "info")
 
                     for port, address, pid in listening_ports:
                         try:
                             process = psutil.Process(int(pid))
                             process_name = process.name()
-                            self.log_message(f"端口 {port:<6} | PID {pid:<8} | {process_name}", "info")
+                            self.log_message(f"🔌 端口 {port:<6} | 🆔 PID {pid:<8} | 🏷️  {process_name}", "info")
                         except (psutil.NoSuchProcess, psutil.AccessDenied):
-                            self.log_message(f"端口 {port:<6} | PID {pid:<8} | [无法获取进程名]", "error")
+                            self.log_message(f"🔌 端口 {port:<6} | 🆔 PID {pid:<8} | ❌ [无法获取进程名]", "error")
                 else:
                     self.log_message("当前没有监听的端口", "success")
 
@@ -528,6 +679,33 @@ class PortManagerGUI:
         except Exception as e:
             messagebox.showerror("错误", f"复制失败: {str(e)}")
             self.update_status("复制失败")
+
+    def show_about(self):
+        """显示关于对话框"""
+        about_text = """🔌 端口管理工具 v1.0
+
+一个现代化的端口管理和进程监控工具
+
+主要功能:
+• 🔍 端口占用查询
+• ⚡ PID快速操作
+• 🔄 进程管理
+• 📊 实时监控
+
+快捷键:
+• F5 / Ctrl+R - 刷新端口列表
+• Ctrl+Q - 退出程序
+• F1 - 显示关于信息
+
+技术栈:
+• Python + Tkinter
+• psutil 进程管理
+
+安全提醒:
+使用前请了解相关进程的作用
+避免终止系统关键进程"""
+
+        messagebox.showinfo("关于端口管理工具", about_text)
 
 def main():
     """主函数"""
