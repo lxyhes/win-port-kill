@@ -137,9 +137,9 @@ Thumbs.db
 # Claude
 .claude/
 
+# User data files
+port_history.json
+
 # Temporary files
 *.tmp
 *.temp
-
-# User data files
-port_history.json

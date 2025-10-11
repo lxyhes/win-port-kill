@@ -18,17 +18,17 @@ from pathlib import Path
 class PortManagerGUI:
     def __init__(self, root):
         self.root = root
-        self.root.title("端口管理工具")
-        self.root.geometry("900x700")
+        self.root.title("🔌 端口管理工具 - Windows版")
+        self.root.geometry("1000x750")
         self.root.resizable(True, True)
 
-        # 设置主题色彩
-        self.root.configure(bg='#f0f0f0')
+        # 设置现代化主题色彩
+        self.root.configure(bg='#f8f9fa')
 
         # 设置最小窗口大小
-        self.root.minsize(800, 600)
+        self.root.minsize(900, 650)
 
-        # 设置图标（如果有的话）
+        # 设置窗口图标（如果有的话）
         try:
             if os.path.exists("icon.ico"):
                 self.root.iconbitmap("icon.ico")
@@ -46,228 +46,326 @@ class PortManagerGUI:
         self.setup_ui()
 
     def setup_styles(self):
-        """设置自定义样式"""
+        """设置现代化自定义样式"""
         style = ttk.Style()
 
         # 配置主题
         style.theme_use('clam')
 
-        # 自定义按钮样式
+        # 现代化按钮样式 - 更大的圆角和阴影效果
         style.configure('Action.TButton',
-                       background='#4CAF50',
+                       background='#007ACC',
                        foreground='white',
                        borderwidth=0,
                        focuscolor='none',
-                       font=('Microsoft YaHei UI', 9, 'bold'))
+                       font=('Segoe UI Variable', 10, 'normal'),
+                       relief='flat')
         style.map('Action.TButton',
-                 background=[('active', '#45a049'),
-                           ('pressed', '#3d8b40')])
+                 background=[('active', '#005a9e'),
+                           ('pressed', '#004578')])
 
         style.configure('Danger.TButton',
-                       background='#f44336',
+                       background='#e74c3c',
                        foreground='white',
                        borderwidth=0,
                        focuscolor='none',
-                       font=('Microsoft YaHei UI', 9, 'bold'))
+                       font=('Segoe UI Variable', 10, 'normal'),
+                       relief='flat')
         style.map('Danger.TButton',
-                 background=[('active', '#da190b'),
-                           ('pressed', '#b71c1c')])
+                 background=[('active', '#c0392b'),
+                           ('pressed', '#a93226')])
 
         style.configure('Info.TButton',
-                       background='#2196F3',
+                       background='#3498db',
                        foreground='white',
                        borderwidth=0,
                        focuscolor='none',
-                       font=('Microsoft YaHei UI', 9, 'bold'))
+                       font=('Segoe UI Variable', 10, 'normal'),
+                       relief='flat')
         style.map('Info.TButton',
-                 background=[('active', '#0b7dda'),
-                           ('pressed', '#0a58ca')])
+                 background=[('active', '#2980b9'),
+                           ('pressed', '#21618c')])
 
         style.configure('Warning.TButton',
-                       background='#FF9800',
+                       background='#f39c12',
                        foreground='white',
                        borderwidth=0,
                        focuscolor='none',
-                       font=('Microsoft YaHei UI', 9, 'bold'))
+                       font=('Segoe UI Variable', 10, 'normal'),
+                       relief='flat')
         style.map('Warning.TButton',
-                 background=[('active', '#e68900'),
-                           ('pressed', '#cc7a00')])
+                 background=[('active', '#e67e22'),
+                           ('pressed', '#d68910')])
 
-        # 配置输入框样式
+        style.configure('Success.TButton',
+                       background='#27ae60',
+                       foreground='white',
+                       borderwidth=0,
+                       focuscolor='none',
+                       font=('Segoe UI Variable', 10, 'normal'),
+                       relief='flat')
+        style.map('Success.TButton',
+                 background=[('active', '#229954'),
+                           ('pressed', '#1e8449')])
+
+        # 现代化输入框样式
         style.configure('Custom.TEntry',
                        fieldbackground='white',
-                       borderwidth=1,
+                       borderwidth=2,
                        relief='solid',
-                       font=('Microsoft YaHei UI', 10))
+                       font=('Segoe UI Variable', 11),
+                       insertcolor='#007ACC')
 
-        # 配置框架样式
+        # 现代化框架样式 - 卡片设计
         style.configure('Card.TLabelframe',
                        background='white',
-                       relief='solid',
-                       borderwidth=1)
+                       relief='flat',
+                       borderwidth=0)
 
         style.configure('Card.TLabelframe.Label',
                        background='white',
-                       foreground='#333333',
-                       font=('Microsoft YaHei UI', 10, 'bold'))
+                       foreground='#2c3e50',
+                       font=('Segoe UI Variable', 12, 'bold'))
+
+        # 下拉框样式
+        style.configure('Custom.TCombobox',
+                       fieldbackground='white',
+                       borderwidth=2,
+                       relief='solid',
+                       font=('Segoe UI Variable', 10))
 
     def setup_ui(self):
-        # 主框架
-        main_frame = ttk.Frame(self.root, padding="15")
-        main_frame.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
+        # 主容器
+        main_container = tk.Frame(self.root, bg='#f8f9fa')
+        main_container.pack(fill=tk.BOTH, expand=True, padx=20, pady=20)
 
         # 配置网格权重
         self.root.columnconfigure(0, weight=1)
         self.root.rowconfigure(0, weight=1)
-        main_frame.columnconfigure(0, weight=1)
-        main_frame.rowconfigure(2, weight=1)
+        main_container.columnconfigure(0, weight=1)
+        main_container.rowconfigure(2, weight=1)
 
-        # 标题区域
-        title_frame = ttk.Frame(main_frame)
-        title_frame.grid(row=0, column=0, sticky=(tk.W, tk.E), pady=(0, 25))
+        # 标题区域 - 现代化设计
+        title_frame = tk.Frame(main_container, bg='#f8f9fa')
+        title_frame.grid(row=0, column=0, sticky=(tk.W, tk.E), pady=(0, 30))
 
-        title_label = tk.Label(title_frame, text="🔌 端口管理工具",
-                               font=('Microsoft YaHei UI', 20, 'bold'),
-                               fg='#2196F3', bg='#f0f0f0')
+        # 应用标题和图标
+        title_container = tk.Frame(title_frame, bg='#f8f9fa')
+        title_container.pack()
+
+        title_label = tk.Label(title_container, text="🔌 端口管理工具",
+                               font=('Segoe UI Variable', 28, 'bold'),
+                               fg='#007ACC', bg='#f8f9fa')
         title_label.pack()
 
-        subtitle_label = tk.Label(title_frame, text="查询端口占用 • 管理进程 • 一键终止",
-                                 font=('Microsoft YaHei UI', 10),
-                                 fg='#666666', bg='#f0f0f0')
-        subtitle_label.pack(pady=(5, 0))
+        subtitle_label = tk.Label(title_container, text="Windows版 - 查询端口占用 • 管理进程 • 一键终止",
+                                 font=('Segoe UI Variable', 12, 'normal'),
+                                 fg='#6c757d', bg='#f8f9fa')
+        subtitle_label.pack(pady=(8, 0))
+
+        # 分隔线
+        separator = tk.Frame(title_frame, height=2, bg='#dee2e6')
+        separator.pack(fill=tk.X, pady=(15, 0))
 
         # 操作区域容器
-        action_container = ttk.Frame(main_frame)
-        action_container.grid(row=1, column=0, sticky=(tk.W, tk.E), pady=(0, 15))
+        action_container = ttk.Frame(main_container)
+        action_container.grid(row=1, column=0, sticky=(tk.W, tk.E), pady=(0, 20))
         action_container.columnconfigure(0, weight=1)
         action_container.columnconfigure(1, weight=1)
 
-        # 端口操作区域
-        port_frame = ttk.LabelFrame(action_container, text="🔍 端口操作", padding="15", style='Card.TLabelframe')
-        port_frame.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S), padx=(0, 8))
+        # 端口操作区域 - 现代化卡片设计
+        port_frame = tk.LabelFrame(action_container, text="🔍 端口操作",
+                                  font=('Segoe UI Variable', 14, 'bold'),
+                                  bg='white', fg='#2c3e50',
+                                  relief='solid', borderwidth=1)
+        port_frame.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S), padx=(0, 10), pady=5)
         port_frame.columnconfigure(1, weight=1)
+        port_frame.configure(padx=20, pady=15)
 
         # 端口输入区域
-        port_input_container = ttk.Frame(port_frame)
-        port_input_container.grid(row=0, column=0, columnspan=2, sticky=(tk.W, tk.E), pady=8)
+        port_input_container = tk.Frame(port_frame, bg='white')
+        port_input_container.grid(row=0, column=0, columnspan=2, sticky=(tk.W, tk.E), pady=(0, 15))
         port_input_container.columnconfigure(1, weight=1)
 
-        ttk.Label(port_input_container, text="端口号:", font=('Microsoft YaHei UI', 10)).grid(row=0, column=0, sticky=tk.W, padx=(0, 12))
+        # 输入标签
+        input_label = tk.Label(port_input_container, text="端口号:",
+                              font=('Segoe UI Variable', 12, 'normal'),
+                              fg='#495057', bg='white')
+        input_label.grid(row=0, column=0, sticky=tk.W, padx=(0, 15))
 
-        # 创建输入框和历史记录下拉框的组合
+        # 输入框容器
+        input_frame = tk.Frame(port_input_container, bg='white')
+        input_frame.grid(row=0, column=1, sticky=(tk.W, tk.E), padx=(0, 10))
+        input_frame.columnconfigure(0, weight=1)
+
+        # 创建输入框
         self.port_var = tk.StringVar()
-        self.port_entry = ttk.Entry(port_input_container, textvariable=self.port_var, width=20, style='Custom.TEntry')
-        self.port_entry.grid(row=0, column=1, sticky=(tk.W, tk.E), padx=(0, 8))
+        self.port_entry = ttk.Entry(input_frame, textvariable=self.port_var,
+                                    width=25, style='Custom.TEntry', font=('Segoe UI Variable', 12))
+        self.port_entry.grid(row=0, column=0, sticky=(tk.W, tk.E), padx=(0, 10))
         self.port_entry.bind('<Return>', lambda e: self.query_port())
 
+        # 历史记录容器
+        history_frame = tk.Frame(port_input_container, bg='white')
+        history_frame.grid(row=0, column=2, sticky=tk.E)
+
         # 历史记录下拉框
-        self.port_combo = ttk.Combobox(port_input_container, textvariable=self.port_var, width=10,
-                                      values=self.port_history, state='readonly')
-        self.port_combo.grid(row=0, column=2, sticky=tk.E)
+        self.port_combo = ttk.Combobox(history_frame, textvariable=self.port_var, width=12,
+                                      values=self.port_history, state='readonly', style='Custom.TCombobox')
+        self.port_combo.pack(side=tk.LEFT, padx=(0, 8))
         self.port_combo.bind('<<ComboboxSelected>>', self.on_history_selected)
 
         # 历史记录按钮
-        self.history_btn = ttk.Button(port_input_container, text="📜", width=3,
+        self.history_btn = ttk.Button(history_frame, text="📜", width=4,
                                      command=self.show_history_dialog, style='Info.TButton')
-        self.history_btn.grid(row=0, column=3, sticky=tk.E, padx=(5, 0))
+        self.history_btn.pack(side=tk.LEFT)
 
-        # 端口操作按钮
-        port_button_frame = ttk.Frame(port_frame)
-        port_button_frame.grid(row=1, column=0, columnspan=2, sticky=(tk.W, tk.E), pady=(10, 0))
+        # 按钮区域 - 现代化按钮组
+        button_container = tk.Frame(port_frame, bg='white')
+        button_container.grid(row=1, column=0, columnspan=2, sticky=(tk.W, tk.E), pady=(10, 0))
 
-        self.query_btn = ttk.Button(port_button_frame, text="🔍 查询端口",
-                                   command=self.query_port, style='Action.TButton', width=15)
-        self.query_btn.pack(side=tk.LEFT, padx=(0, 10))
+        # 主操作按钮
+        self.query_btn = ttk.Button(button_container, text="🔍 查询端口",
+                                   command=self.query_port, style='Action.TButton', width=18)
+        self.query_btn.pack(side=tk.LEFT, padx=(0, 12))
 
-        self.kill_btn = ttk.Button(port_button_frame, text="⚠️ 终止进程",
-                                  command=self.kill_process, style='Danger.TButton', width=15)
-        self.kill_btn.pack(side=tk.LEFT, padx=(0, 10))
+        self.kill_btn = ttk.Button(button_container, text="⚠️ 终止进程",
+                                  command=self.kill_process, style='Danger.TButton', width=18)
+        self.kill_btn.pack(side=tk.LEFT, padx=(0, 12))
 
-        self.refresh_btn = ttk.Button(port_button_frame, text="🔄 刷新列表",
-                                     command=self.refresh_all, style='Info.TButton', width=15)
+        self.refresh_btn = ttk.Button(button_container, text="🔄 刷新列表",
+                                     command=self.refresh_all, style='Success.TButton', width=18)
         self.refresh_btn.pack(side=tk.LEFT)
 
-        # PID快速操作区域
-        pid_frame = ttk.LabelFrame(action_container, text="⚡ PID快速操作", padding="15", style='Card.TLabelframe')
-        pid_frame.grid(row=0, column=1, sticky=(tk.W, tk.E, tk.N, tk.S), padx=(8, 0))
+        # PID快速操作区域 - 现代化卡片设计
+        pid_frame = tk.LabelFrame(action_container, text="⚡ PID快速操作",
+                                font=('Segoe UI Variable', 14, 'bold'),
+                                bg='white', fg='#2c3e50',
+                                relief='solid', borderwidth=1)
+        pid_frame.grid(row=0, column=1, sticky=(tk.W, tk.E, tk.N, tk.S), padx=(10, 0), pady=5)
         pid_frame.columnconfigure(1, weight=1)
+        pid_frame.configure(padx=20, pady=15)
 
-        # PID输入
-        ttk.Label(pid_frame, text="PID:", font=('Microsoft YaHei UI', 10)).grid(row=0, column=0, sticky=tk.W, padx=(0, 12), pady=8)
-        self.pid_entry = ttk.Entry(pid_frame, width=20, style='Custom.TEntry')
-        self.pid_entry.grid(row=0, column=1, sticky=(tk.W, tk.E), padx=(0, 15), pady=8)
+        # PID输入区域
+        pid_input_container = tk.Frame(pid_frame, bg='white')
+        pid_input_container.grid(row=0, column=0, columnspan=2, sticky=(tk.W, tk.E), pady=(0, 15))
+        pid_input_container.columnconfigure(1, weight=1)
+
+        # PID输入标签
+        pid_label = tk.Label(pid_input_container, text="PID:",
+                            font=('Segoe UI Variable', 12, 'normal'),
+                            fg='#495057', bg='white')
+        pid_label.grid(row=0, column=0, sticky=tk.W, padx=(0, 15))
+
+        # PID输入框
+        self.pid_entry = ttk.Entry(pid_input_container, width=25, style='Custom.TEntry', font=('Segoe UI Variable', 12))
+        self.pid_entry.grid(row=0, column=1, sticky=(tk.W, tk.E), padx=(0, 15))
+        self.pid_entry.bind('<Return>', lambda e: self.kill_by_pid())
+
+        # 复制按钮 - 放在输入框旁边
+        self.copy_pid_btn = ttk.Button(pid_input_container, text="📋 复制",
+                                      command=self.copy_pid, style='Warning.TButton', width=10)
+        self.copy_pid_btn.grid(row=0, column=2, sticky=tk.E)
+
+        # PID操作按钮组
+        pid_button_container = tk.Frame(pid_frame, bg='white')
+        pid_button_container.grid(row=1, column=0, columnspan=2, sticky=(tk.W, tk.E), pady=(10, 0))
 
         # PID操作按钮
-        pid_button_frame = ttk.Frame(pid_frame)
-        pid_button_frame.grid(row=1, column=0, columnspan=2, sticky=(tk.W, tk.E), pady=(10, 0))
+        self.extract_pid_btn = ttk.Button(pid_button_container, text="📋 提取PID",
+                                         command=self.extract_pid, style='Info.TButton', width=16)
+        self.extract_pid_btn.pack(side=tk.LEFT, padx=(0, 10))
 
-        self.extract_pid_btn = ttk.Button(pid_button_frame, text="📋 提取PID",
-                                         command=self.extract_pid, style='Info.TButton', width=14)
-        self.extract_pid_btn.pack(side=tk.LEFT, padx=(0, 8))
+        self.kill_pid_btn = ttk.Button(pid_button_container, text="🗑️ 快速杀掉",
+                                      command=self.kill_by_pid, style='Danger.TButton', width=16)
+        self.kill_pid_btn.pack(side=tk.LEFT)
 
-        self.kill_pid_btn = ttk.Button(pid_button_frame, text="🗑️ 快速杀掉",
-                                      command=self.kill_by_pid, style='Danger.TButton', width=14)
-        self.kill_pid_btn.pack(side=tk.LEFT, padx=(0, 8))
-
-        self.copy_pid_btn = ttk.Button(pid_button_frame, text="📝 复制PID",
-                                      command=self.copy_pid, style='Warning.TButton', width=14)
-        self.copy_pid_btn.pack(side=tk.LEFT)
-
-        # 显示区域
-        display_frame = ttk.LabelFrame(main_frame, text="📊 操作结果", padding="15", style='Card.TLabelframe')
-        display_frame.grid(row=2, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
+        # 显示区域 - 现代化设计
+        display_frame = tk.LabelFrame(main_container, text="📊 操作结果",
+                                    font=('Segoe UI Variable', 14, 'bold'),
+                                    bg='white', fg='#2c3e50',
+                                    relief='solid', borderwidth=1)
+        display_frame.grid(row=2, column=0, sticky=(tk.W, tk.E, tk.N, tk.S), pady=5)
         display_frame.columnconfigure(0, weight=1)
         display_frame.rowconfigure(0, weight=1)
+        display_frame.configure(padx=20, pady=15)
 
-        # 结果文本框
+        # 结果文本框 - 现代化终端风格
+        text_container = tk.Frame(display_frame, bg='#2d3748')
+        text_container.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S), pady=(10, 0))
+        text_container.columnconfigure(0, weight=1)
+        text_container.rowconfigure(0, weight=1)
+
         self.result_text = scrolledtext.ScrolledText(
-            display_frame,
+            text_container,
             wrap=tk.WORD,
-            height=18,
-            font=('Consolas', 9),
-            bg='#1e1e1e',
-            fg='#d4d4d4',
-            insertbackground='#d4d4d4',
-            selectbackground='#264f78',
+            height=20,
+            font=('Cascadia Code', 11),
+            bg='#1a202c',
+            fg='#e2e8f0',
+            insertbackground='#e2e8f0',
+            selectbackground='#4a5568',
             relief='flat',
-            borderwidth=1
+            borderwidth=0,
+            padx=15,
+            pady=15
         )
-        self.result_text.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
+        self.result_text.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S), padx=2, pady=2)
 
-        # 配置文本样式
-        self.result_text.tag_config("header", font=('Microsoft YaHei UI', 11, 'bold'), foreground='#569cd6')
-        self.result_text.tag_config("success", foreground='#4ec9b0')
-        self.result_text.tag_config("error", foreground='#f44747')
-        self.result_text.tag_config("info", foreground='#9cdcfe')
-        self.result_text.tag_config("warning", foreground='#dcdcaa')
-        self.result_text.tag_config("pid", background='#264f78', foreground='#ffffff', font=('Consolas', 10, 'bold'))
+        # 配置现代化文本样式
+        self.result_text.tag_config("header", font=('Segoe UI Variable', 13, 'bold'), foreground='#63b3ed')
+        self.result_text.tag_config("success", foreground='#68d391')
+        self.result_text.tag_config("error", foreground='#fc8181')
+        self.result_text.tag_config("info", foreground='#90cdf4')
+        self.result_text.tag_config("warning", foreground='#f6e05e')
+        self.result_text.tag_config("pid", background='#4a5568', foreground='#e2e8f0', font=('Cascadia Code', 12, 'bold'))
 
-        # 添加一些帮助文本
-        help_text = "💡 提示: 输入端口号查询占用情况，使用PID快速操作区域进行进程管理\n"
-        self.result_text.insert(tk.END, help_text, "info")
+        # 添加欢迎文本
+        welcome_text = "💡 欢迎使用端口管理工具\n" + "="*50 + "\n"
+        welcome_text += "📌 快速开始:\n"
+        welcome_text += "   1. 输入端口号查询占用情况\n"
+        welcome_text += "   2. 使用PID区域管理进程\n"
+        welcome_text += "   3. 查看历史记录快速操作\n"
+        welcome_text += "="*50 + "\n\n"
+        self.result_text.insert(tk.END, welcome_text, "info")
 
         # 存储查询到的PID
         self.current_pids = []
 
-        # 状态栏
-        status_container = ttk.Frame(main_frame)
-        status_container.grid(row=3, column=0, sticky=(tk.W, tk.E), pady=(15, 0))
+        # 状态栏 - 现代化设计
+        status_container = tk.Frame(main_container, bg='#f8f9fa', height=50)
+        status_container.grid(row=3, column=0, sticky=(tk.W, tk.E), pady=(20, 0))
         status_container.columnconfigure(0, weight=1)
+
+        # 状态容器
+        status_frame = tk.Frame(status_container, bg='#ffffff', relief='solid', borderwidth=1)
+        status_frame.pack(fill=tk.X, padx=20)
+        status_frame.configure(pady=12, padx=15)
+
+        # 状态图标和文本
+        status_content = tk.Frame(status_frame, bg='#ffffff')
+        status_content.pack(fill=tk.X)
 
         self.status_var = tk.StringVar()
         self.status_var.set("✅ 就绪 - 可以开始操作")
 
-        # 状态标签
-        status_label = tk.Label(
-            status_container,
-            textvariable=self.status_var,
-            font=('Microsoft YaHei UI', 9),
-            fg='#2196F3',
-            bg='#f0f0f0',
-            relief='flat',
-            pady=8
-        )
-        status_label.grid(row=0, column=0, sticky=(tk.W, tk.E))
+        # 状态图标
+        status_icon = tk.Label(status_content, text="📍",
+                             font=('Segoe UI Variable', 16),
+                             fg='#007ACC', bg='#ffffff')
+        status_icon.pack(side=tk.LEFT, padx=(0, 10))
+
+        # 状态文本
+        status_label = tk.Label(status_content, textvariable=self.status_var,
+                              font=('Segoe UI Variable', 11),
+                              fg='#495057', bg='#ffffff')
+        status_label.pack(side=tk.LEFT, fill=tk.X, expand=True)
+
+        # 版本信息
+        version_label = tk.Label(status_content, text="v1.1",
+                               font=('Segoe UI Variable', 9),
+                               fg='#6c757d', bg='#ffffff')
+        version_label.pack(side=tk.RIGHT)
 
         # 初始化时显示所有端口
         self.refresh_all()
