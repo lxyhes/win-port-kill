@@ -12,6 +12,8 @@ import threading
 import psutil
 import sys
 import os
+import json
+from pathlib import Path
 
 class PortManagerGUI:
     def __init__(self, root):
@@ -32,6 +34,11 @@ class PortManagerGUI:
                 self.root.iconbitmap("icon.ico")
         except:
             pass
+
+        # 初始化历史记录
+        self.history_file = Path("port_history.json")
+        self.port_history = self.load_port_history()
+        self.max_history = 10  # 最多保存10个历史记录
 
         # 自定义样式
         self.setup_styles()
@@ -140,11 +147,29 @@ class PortManagerGUI:
         port_frame.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S), padx=(0, 8))
         port_frame.columnconfigure(1, weight=1)
 
-        # 端口输入
-        ttk.Label(port_frame, text="端口号:", font=('Microsoft YaHei UI', 10)).grid(row=0, column=0, sticky=tk.W, padx=(0, 12), pady=8)
-        self.port_entry = ttk.Entry(port_frame, width=25, style='Custom.TEntry')
-        self.port_entry.grid(row=0, column=1, sticky=(tk.W, tk.E), padx=(0, 15), pady=8)
+        # 端口输入区域
+        port_input_container = ttk.Frame(port_frame)
+        port_input_container.grid(row=0, column=0, columnspan=2, sticky=(tk.W, tk.E), pady=8)
+        port_input_container.columnconfigure(1, weight=1)
+
+        ttk.Label(port_input_container, text="端口号:", font=('Microsoft YaHei UI', 10)).grid(row=0, column=0, sticky=tk.W, padx=(0, 12))
+
+        # 创建输入框和历史记录下拉框的组合
+        self.port_var = tk.StringVar()
+        self.port_entry = ttk.Entry(port_input_container, textvariable=self.port_var, width=20, style='Custom.TEntry')
+        self.port_entry.grid(row=0, column=1, sticky=(tk.W, tk.E), padx=(0, 8))
         self.port_entry.bind('<Return>', lambda e: self.query_port())
+
+        # 历史记录下拉框
+        self.port_combo = ttk.Combobox(port_input_container, textvariable=self.port_var, width=10,
+                                      values=self.port_history, state='readonly')
+        self.port_combo.grid(row=0, column=2, sticky=tk.E)
+        self.port_combo.bind('<<ComboboxSelected>>', self.on_history_selected)
+
+        # 历史记录按钮
+        self.history_btn = ttk.Button(port_input_container, text="📜", width=3,
+                                     command=self.show_history_dialog, style='Info.TButton')
+        self.history_btn.grid(row=0, column=3, sticky=tk.E, padx=(5, 0))
 
         # 端口操作按钮
         port_button_frame = ttk.Frame(port_frame)
@@ -307,6 +332,9 @@ class PortManagerGUI:
         port = self.validate_port(port_str)
         if port is None:
             return
+
+        # 保存到历史记录
+        self.add_to_history(port_str)
 
         # 在新线程中执行查询
         threading.Thread(target=self._query_port_thread, args=(port,), daemon=True).start()
@@ -682,7 +710,7 @@ class PortManagerGUI:
 
     def show_about(self):
         """显示关于对话框"""
-        about_text = """🔌 端口管理工具 v1.0
+        about_text = """🔌 端口管理工具 v1.1
 
 一个现代化的端口管理和进程监控工具
 
@@ -691,6 +719,7 @@ class PortManagerGUI:
 • ⚡ PID快速操作
 • 🔄 进程管理
 • 📊 实时监控
+• 📜 端口历史记录
 
 快捷键:
 • F5 / Ctrl+R - 刷新端口列表
@@ -706,6 +735,150 @@ class PortManagerGUI:
 避免终止系统关键进程"""
 
         messagebox.showinfo("关于端口管理工具", about_text)
+
+    def load_port_history(self):
+        """加载端口历史记录"""
+        try:
+            if self.history_file.exists():
+                with open(self.history_file, 'r', encoding='utf-8') as f:
+                    return json.load(f)
+            return []
+        except Exception as e:
+            print(f"加载历史记录失败: {e}")
+            return []
+
+    def save_port_history(self):
+        """保存端口历史记录"""
+        try:
+            with open(self.history_file, 'w', encoding='utf-8') as f:
+                json.dump(self.port_history, f, ensure_ascii=False, indent=2)
+        except Exception as e:
+            print(f"保存历史记录失败: {e}")
+
+    def add_to_history(self, port):
+        """添加端口到历史记录"""
+        # 移除重复项
+        if port in self.port_history:
+            self.port_history.remove(port)
+
+        # 添加到开头
+        self.port_history.insert(0, port)
+
+        # 限制历史记录数量
+        if len(self.port_history) > self.max_history:
+            self.port_history = self.port_history[:self.max_history]
+
+        # 更新下拉框
+        self.port_combo['values'] = self.port_history
+
+        # 保存到文件
+        self.save_port_history()
+
+    def on_history_selected(self, event):
+        """历史记录选择事件"""
+        selected_port = self.port_var.get().strip()
+        if selected_port:
+            self.update_status(f"已选择历史端口: {selected_port}")
+            # 自动查询选中的端口
+            self.query_port()
+
+    def show_history_dialog(self):
+        """显示历史记录管理对话框"""
+        if not self.port_history:
+            messagebox.showinfo("历史记录", "当前没有历史记录")
+            return
+
+        dialog = tk.Toplevel(self.root)
+        dialog.title("端口历史记录")
+        dialog.geometry("400x500")
+        dialog.resizable(True, True)
+        dialog.transient(self.root)
+        dialog.grab_set()
+
+        # 居中显示
+        dialog.update_idletasks()
+        x = (dialog.winfo_screenwidth() // 2) - (dialog.winfo_width() // 2)
+        y = (dialog.winfo_screenheight() // 2) - (dialog.winfo_height() // 2)
+        dialog.geometry(f'+{x}+{y}')
+
+        # 主框架
+        main_frame = ttk.Frame(dialog, padding="15")
+        main_frame.pack(fill=tk.BOTH, expand=True)
+
+        # 标题
+        title_label = ttk.Label(main_frame, text="📜 端口历史记录",
+                               font=('Microsoft YaHei UI', 12, 'bold'))
+        title_label.pack(pady=(0, 15))
+
+        # 历史记录列表框架
+        list_frame = ttk.Frame(main_frame)
+        list_frame.pack(fill=tk.BOTH, expand=True, pady=(0, 15))
+
+        # 创建Listbox和Scrollbar
+        scrollbar = ttk.Scrollbar(list_frame)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+
+        history_listbox = tk.Listbox(list_frame, yscrollcommand=scrollbar.set,
+                                     font=('Consolas', 10))
+        history_listbox.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        scrollbar.config(command=history_listbox.yview)
+
+        # 添加历史记录
+        for i, port in enumerate(self.port_history):
+            history_listbox.insert(tk.END, f"端口 {port}")
+            history_listbox.itemconfig(i, fg='#2196F3')
+
+        # 按钮框架
+        button_frame = ttk.Frame(main_frame)
+        button_frame.pack(fill=tk.X)
+
+        def select_port():
+            selection = history_listbox.curselection()
+            if selection:
+                index = selection[0]
+                selected_port = self.port_history[index]
+                self.port_var.set(selected_port)
+                self.update_status(f"已选择历史端口: {selected_port}")
+                dialog.destroy()
+                # 自动查询选中的端口
+                self.query_port()
+
+        def delete_port():
+            selection = history_listbox.curselection()
+            if selection:
+                index = selection[0]
+                port_to_delete = self.port_history[index]
+
+                if messagebox.askyesno("确认删除", f"确定要删除端口 {port_to_delete} 的历史记录吗？"):
+                    self.port_history.pop(index)
+                    history_listbox.delete(index)
+                    self.port_combo['values'] = self.port_history
+                    self.save_port_history()
+                    self.update_status(f"已删除历史记录: {port_to_delete}")
+
+        def clear_all():
+            if messagebox.askyesno("确认清空", "确定要清空所有历史记录吗？"):
+                self.port_history.clear()
+                history_listbox.delete(0, tk.END)
+                self.port_combo['values'] = self.port_history
+                self.save_port_history()
+                self.update_status("已清空所有历史记录")
+
+        def close_dialog():
+            dialog.destroy()
+
+        # 按钮布局
+        ttk.Button(button_frame, text="📋 选择并查询", command=select_port,
+                  style='Action.TButton', width=15).pack(side=tk.LEFT, padx=(0, 5))
+        ttk.Button(button_frame, text="🗑️ 删除选中", command=delete_port,
+                  style='Danger.TButton', width=15).pack(side=tk.LEFT, padx=(0, 5))
+        ttk.Button(button_frame, text="🧹 清空全部", command=clear_all,
+                  style='Warning.TButton', width=15).pack(side=tk.LEFT, padx=(0, 5))
+        ttk.Button(button_frame, text="❌ 关闭", command=close_dialog,
+                  width=10).pack(side=tk.RIGHT)
+
+        # 双击事件
+        history_listbox.bind('<Double-Button-1>', lambda e: select_port())
 
 def main():
     """主函数"""

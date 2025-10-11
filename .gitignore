@@ -140,3 +140,6 @@ Thumbs.db
 # Temporary files
 *.tmp
 *.temp
+
+# User data files
+port_history.json
