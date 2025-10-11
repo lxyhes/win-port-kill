@@ -533,12 +533,13 @@ class PortManagerGUI:
 
                     if 'LISTENING' in line:
                         parts = line.split()
+                        # netstat格式：协议 本地地址 外部地址 状态 PID
                         # 确保有足够的字段
-                        if len(parts) >= 4:
+                        if len(parts) >= 5:
                             local_address = parts[1]
                             # 确保PID字段存在且不为空
-                            if len(parts) > 3 and parts[3]:
-                                pid = parts[3]
+                            if len(parts) >= 5 and parts[4]:
+                                pid = parts[4]
                             else:
                                 continue
 
