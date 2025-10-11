@@ -13,20 +13,28 @@ import psutil
 import sys
 import os
 import json
+import time
+import socket
 from pathlib import Path
+from datetime import datetime
 
 class PortManagerGUI:
     def __init__(self, root):
         self.root = root
-        self.root.title("🔌 端口管理工具 - Windows版")
-        self.root.geometry("1000x750")
+        self.root.title("🌐 端口管理工具 - Windows版")
+        self.root.geometry("1200x850")
         self.root.resizable(True, True)
 
         # 设置现代化主题色彩
         self.root.configure(bg='#f8f9fa')
 
         # 设置最小窗口大小
-        self.root.minsize(900, 650)
+        self.root.minsize(1000, 700)
+
+        # 网络连接监控相关变量
+        self.monitoring_active = False
+        self.current_connections = []
+        self.monitor_thread = None
 
         # 设置窗口图标（如果有的话）
         try:
@@ -167,18 +175,19 @@ class PortManagerGUI:
         separator = tk.Frame(title_frame, height=2, bg='#dee2e6')
         separator.pack(fill=tk.X, pady=(15, 0))
 
-        # 操作区域容器
+        # 操作区域容器 - 三列布局
         action_container = ttk.Frame(main_container)
         action_container.grid(row=1, column=0, sticky=(tk.W, tk.E), pady=(0, 20))
         action_container.columnconfigure(0, weight=1)
         action_container.columnconfigure(1, weight=1)
+        action_container.columnconfigure(2, weight=1)
 
         # 端口操作区域 - 现代化卡片设计
         port_frame = tk.LabelFrame(action_container, text="🔍 端口操作",
                                   font=('Segoe UI Variable', 14, 'bold'),
                                   bg='white', fg='#2c3e50',
                                   relief='solid', borderwidth=1)
-        port_frame.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S), padx=(0, 10), pady=5)
+        port_frame.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S), padx=(0, 8), pady=5)
         port_frame.columnconfigure(1, weight=1)
         port_frame.configure(padx=20, pady=15)
 
@@ -242,7 +251,7 @@ class PortManagerGUI:
                                 font=('Segoe UI Variable', 14, 'bold'),
                                 bg='white', fg='#2c3e50',
                                 relief='solid', borderwidth=1)
-        pid_frame.grid(row=0, column=1, sticky=(tk.W, tk.E, tk.N, tk.S), padx=(10, 0), pady=5)
+        pid_frame.grid(row=0, column=1, sticky=(tk.W, tk.E, tk.N, tk.S), padx=(8, 8), pady=5)
         pid_frame.columnconfigure(1, weight=1)
         pid_frame.configure(padx=20, pady=15)
 
@@ -279,6 +288,96 @@ class PortManagerGUI:
         self.kill_pid_btn = ttk.Button(pid_button_container, text="🗑️ 快速杀掉",
                                       command=self.kill_by_pid, style='Danger.TButton', width=16)
         self.kill_pid_btn.pack(side=tk.LEFT)
+
+        # 网络连接监控区域 - 现代化卡片设计
+        monitor_frame = tk.LabelFrame(action_container, text="🌐 连接监控",
+                                     font=('Segoe UI Variable', 14, 'bold'),
+                                     bg='white', fg='#2c3e50',
+                                     relief='solid', borderwidth=1)
+        monitor_frame.grid(row=0, column=2, sticky=(tk.W, tk.E, tk.N, tk.S), padx=(8, 0), pady=5)
+        monitor_frame.columnconfigure(0, weight=1)
+        monitor_frame.configure(padx=20, pady=15)
+
+        # 监控控制区域
+        monitor_control_container = tk.Frame(monitor_frame, bg='white')
+        monitor_control_container.grid(row=0, column=0, sticky=(tk.W, tk.E), pady=(0, 15))
+        monitor_control_container.columnconfigure(0, weight=1)
+
+        # 监控状态显示
+        status_container = tk.Frame(monitor_control_container, bg='white')
+        status_container.grid(row=0, column=0, sticky=(tk.W, tk.E), pady=(0, 10))
+        status_container.columnconfigure(1, weight=1)
+
+        status_label = tk.Label(status_container, text="监控状态:",
+                              font=('Segoe UI Variable', 12, 'normal'),
+                              fg='#495057', bg='white')
+        status_label.grid(row=0, column=0, sticky=tk.W, padx=(0, 10))
+
+        self.monitor_status_label = tk.Label(status_container, text="🔴 未监控",
+                                           font=('Segoe UI Variable', 12, 'bold'),
+                                           fg='#dc3545', bg='white')
+        self.monitor_status_label.grid(row=0, column=1, sticky=tk.W)
+
+        # 监控控制按钮
+        monitor_button_container = tk.Frame(monitor_control_container, bg='white')
+        monitor_button_container.grid(row=1, column=0, sticky=(tk.W, tk.E))
+
+        self.start_monitor_btn = ttk.Button(monitor_button_container, text="▶️ 开始监控",
+                                           command=self.start_monitoring, style='Success.TButton', width=16)
+        self.start_monitor_btn.pack(side=tk.LEFT, padx=(0, 8))
+
+        self.stop_monitor_btn = ttk.Button(monitor_button_container, text="⏸️ 停止监控",
+                                          command=self.stop_monitoring, style='Warning.TButton', width=16,
+                                          state='disabled')
+        self.stop_monitor_btn.pack(side=tk.LEFT, padx=(0, 8))
+
+        self.refresh_connections_btn = ttk.Button(monitor_button_container, text="🔄 刷新连接",
+                                                 command=self.refresh_connections, style='Info.TButton', width=16)
+        self.refresh_connections_btn.pack(side=tk.LEFT)
+
+        # 连接信息显示区域
+        connections_frame = tk.Frame(monitor_frame, bg='white')
+        connections_frame.grid(row=2, column=0, sticky=(tk.W, tk.E, tk.N, tk.S), pady=(10, 0))
+        connections_frame.columnconfigure(0, weight=1)
+        connections_frame.rowconfigure(0, weight=1)
+
+        # 连接信息文本框 - 紧凑的终端风格
+        monitor_text_container = tk.Frame(connections_frame, bg='#2d3748')
+        monitor_text_container.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
+        monitor_text_container.columnconfigure(0, weight=1)
+        monitor_text_container.rowconfigure(0, weight=1)
+
+        self.connections_text = scrolledtext.ScrolledText(
+            monitor_text_container,
+            wrap=tk.WORD,
+            height=12,
+            font=('Cascadia Code', 10),
+            bg='#1a202c',
+            fg='#e2e8f0',
+            insertbackground='#e2e8f0',
+            selectbackground='#4a5568',
+            relief='flat',
+            borderwidth=0,
+            padx=10,
+            pady=10
+        )
+        self.connections_text.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S), padx=2, pady=2)
+
+        # 配置连接监控文本样式
+        self.connections_text.tag_config("header", font=('Segoe UI Variable', 11, 'bold'), foreground='#63b3ed')
+        self.connections_text.tag_config("success", foreground='#68d391')
+        self.connections_text.tag_config("error", foreground='#fc8181')
+        self.connections_text.tag_config("info", foreground='#90cdf4')
+        self.connections_text.tag_config("warning", foreground='#f6e05e')
+        self.connections_text.tag_config("connection", background='#4a5568', foreground='#e2e8f0')
+        self.connections_text.tag_config("highlight", background='#2b6cb0', foreground='#ffffff')
+
+        # 添加监控说明文本
+        monitor_info = "📡 网络连接监控\n" + "="*40 + "\n"
+        monitor_info += "点击 '开始监控' 实时查看网络连接\n"
+        monitor_info += "支持监控指定端口的连接详情\n"
+        monitor_info += "="*40 + "\n\n"
+        self.connections_text.insert(tk.END, monitor_info, "info")
 
         # 显示区域 - 现代化设计
         display_frame = tk.LabelFrame(main_container, text="📊 操作结果",
@@ -321,12 +420,18 @@ class PortManagerGUI:
         self.result_text.tag_config("pid", background='#4a5568', foreground='#e2e8f0', font=('Cascadia Code', 12, 'bold'))
 
         # 添加欢迎文本
-        welcome_text = "💡 欢迎使用端口管理工具\n" + "="*50 + "\n"
+        welcome_text = "💡 欢迎使用端口管理工具 v1.2 - 网络监控版\n" + "="*60 + "\n"
         welcome_text += "📌 快速开始:\n"
         welcome_text += "   1. 输入端口号查询占用情况\n"
         welcome_text += "   2. 使用PID区域管理进程\n"
-        welcome_text += "   3. 查看历史记录快速操作\n"
-        welcome_text += "="*50 + "\n\n"
+        welcome_text += "   3. 🌐 新功能: 使用连接监控实时查看网络连接\n"
+        welcome_text += "   4. 查看历史记录快速操作\n"
+        welcome_text += "\n🆕 v1.2 新功能:\n"
+        welcome_text += "   • 实时网络连接监控\n"
+        welcome_text += "   • 连接详情和远程IP显示\n"
+        welcome_text += "   • 进程关联信息展示\n"
+        welcome_text += "   • 自动刷新连接状态\n"
+        welcome_text += "="*60 + "\n\n"
         self.result_text.insert(tk.END, welcome_text, "info")
 
         # 存储查询到的PID
@@ -362,10 +467,13 @@ class PortManagerGUI:
         status_label.pack(side=tk.LEFT, fill=tk.X, expand=True)
 
         # 版本信息
-        version_label = tk.Label(status_content, text="v1.1",
+        version_label = tk.Label(status_content, text="v1.2 - 网络监控版",
                                font=('Segoe UI Variable', 9),
                                fg='#6c757d', bg='#ffffff')
         version_label.pack(side=tk.RIGHT)
+
+        # 设置窗口关闭事件
+        self.root.protocol("WM_DELETE_WINDOW", self.on_closing)
 
         # 初始化时显示所有端口
         self.refresh_all()
@@ -838,16 +946,23 @@ class PortManagerGUI:
 
     def show_about(self):
         """显示关于对话框"""
-        about_text = """🔌 端口管理工具 v1.1
+        about_text = """🌐 端口管理工具 v1.2 - 网络监控版
 
-一个现代化的端口管理和进程监控工具
+一个现代化的端口管理和网络连接监控工具
 
 主要功能:
 • 🔍 端口占用查询
 • ⚡ PID快速操作
 • 🔄 进程管理
 • 📊 实时监控
+• 🌐 网络连接监控
 • 📜 端口历史记录
+
+网络连接监控功能:
+• 实时查看指定端口的连接状态
+• 显示远程IP地址和连接详情
+• 监控连接的进程信息
+• 自动刷新连接状态
 
 快捷键:
 • F5 / Ctrl+R - 刷新端口列表
@@ -856,11 +971,13 @@ class PortManagerGUI:
 
 技术栈:
 • Python + Tkinter
-• psutil 进程管理
+• psutil 进程和网络管理
+• 多线程实时监控
 
 安全提醒:
 使用前请了解相关进程的作用
-避免终止系统关键进程"""
+避免终止系统关键进程
+监控网络连接时请遵守相关法律法规"""
 
         messagebox.showinfo("关于端口管理工具", about_text)
 
@@ -1007,6 +1124,156 @@ class PortManagerGUI:
 
         # 双击事件
         history_listbox.bind('<Double-Button-1>', lambda e: select_port())
+
+    def start_monitoring(self):
+        """开始网络连接监控"""
+        if self.monitoring_active:
+            return
+
+        # 检查是否有指定端口
+        port_str = self.port_var.get().strip()
+        if not port_str:
+            messagebox.showwarning("警告", "请先输入要监控的端口号")
+            return
+
+        port = self.validate_port(port_str)
+        if port is None:
+            return
+
+        self.monitoring_active = True
+        self.monitor_status_label.config(text="🟢 监控中", fg='#28a745')
+        self.start_monitor_btn.config(state='disabled')
+        self.stop_monitor_btn.config(state='normal')
+        self.refresh_connections_btn.config(state='disabled')
+
+        # 开始监控线程
+        self.monitor_thread = threading.Thread(target=self._monitor_connections, args=(port,), daemon=True)
+        self.monitor_thread.start()
+
+        self.log_message(f"🌐 开始监控端口 {port} 的网络连接", "info")
+        self.update_status(f"正在监控端口 {port} 的网络连接")
+
+    def stop_monitoring(self):
+        """停止网络连接监控"""
+        if not self.monitoring_active:
+            return
+
+        self.monitoring_active = False
+        self.monitor_status_label.config(text="🔴 未监控", fg='#dc3545')
+        self.start_monitor_btn.config(state='normal')
+        self.stop_monitor_btn.config(state='disabled')
+        self.refresh_connections_btn.config(state='normal')
+
+        self.log_message("⏹️ 网络连接监控已停止", "warning")
+        self.update_status("网络连接监控已停止")
+
+    def refresh_connections(self):
+        """手动刷新连接信息"""
+        port_str = self.port_var.get().strip()
+        if not port_str:
+            messagebox.showwarning("警告", "请先输入端口号")
+            return
+
+        port = self.validate_port(port_str)
+        if port is None:
+            return
+
+        threading.Thread(target=self._get_connections_info, args=(port,), daemon=True).start()
+
+    def _monitor_connections(self, port):
+        """监控网络连接的主循环"""
+        try:
+            while self.monitoring_active:
+                self._get_connections_info(port)
+                time.sleep(2)  # 每2秒刷新一次
+        except Exception as e:
+            self.log_message(f"监控出错: {str(e)}", "error")
+
+    def _get_connections_info(self, port):
+        """获取指定端口的连接信息"""
+        try:
+            connections = []
+
+            # 使用psutil获取网络连接
+            for conn in psutil.net_connections():
+                if conn.laddr.port == port:
+                    # 获取连接信息
+                    local_ip = conn.laddr.ip
+                    local_port = conn.laddr.port
+                    status = conn.status
+                    pid = conn.pid
+
+                    # 远程地址
+                    remote_addr = "N/A"
+                    if conn.raddr:
+                        remote_ip = conn.raddr.ip
+                        remote_port = conn.raddr.port
+                        remote_addr = f"{remote_ip}:{remote_port}"
+
+                    # 获取进程信息
+                    process_name = "Unknown"
+                    if pid:
+                        try:
+                            process = psutil.Process(pid)
+                            process_name = process.name()
+                        except (psutil.NoSuchProcess, psutil.AccessDenied):
+                            pass
+
+                    connections.append({
+                        'local_addr': f"{local_ip}:{local_port}",
+                        'remote_addr': remote_addr,
+                        'status': status,
+                        'pid': pid,
+                        'process_name': process_name
+                    })
+
+            self.current_connections = connections
+            self._display_connections(connections, port)
+
+        except Exception as e:
+            self.log_message(f"获取连接信息出错: {str(e)}", "error")
+
+    def _display_connections(self, connections, port):
+        """显示连接信息"""
+        # 在主线程中更新UI
+        self.root.after(0, self._update_connections_display, connections, port)
+
+    def _update_connections_display(self, connections, port):
+        """更新连接显示UI"""
+        self.connections_text.delete(1.0, tk.END)
+
+        # 添加标题
+        timestamp = datetime.now().strftime("%H:%M:%S")
+        self.connections_text.insert(tk.END, f"📡 端口 {port} 连接监控 - {timestamp}\n", "header")
+        self.connections_text.insert(tk.END, "=" * 50 + "\n", "header")
+
+        if not connections:
+            self.connections_text.insert(tk.END, f"🔍 端口 {port} 当前没有活动连接\n", "info")
+        else:
+            self.connections_text.insert(tk.END, f"📊 找到 {len(connections)} 个连接:\n\n", "info")
+
+            for i, conn in enumerate(connections, 1):
+                self.connections_text.insert(tk.END, f"连接 #{i}\n", "highlight")
+                self.connections_text.insert(tk.END, f"📍 本地地址: {conn['local_addr']}\n", "info")
+                self.connections_text.insert(tk.END, f"🌐 远程地址: {conn['remote_addr']}\n", "info")
+                self.connections_text.insert(tk.END, f"📊 连接状态: {conn['status']}\n", "info")
+
+                if conn['pid']:
+                    self.connections_text.insert(tk.END, f"🆔 进程PID: {conn['pid']}\n", "info")
+                    self.connections_text.insert(tk.END, f"🏷️  进程名称: {conn['process_name']}\n", "warning")
+                else:
+                    self.connections_text.insert(tk.END, f"🆔 进程PID: [系统进程]\n", "warning")
+
+                self.connections_text.insert(tk.END, "─" * 40 + "\n", "info")
+
+    def on_closing(self):
+        """窗口关闭时的清理工作"""
+        # 停止监控
+        if self.monitoring_active:
+            self.monitoring_active = False
+
+        # 销毁窗口
+        self.root.destroy()
 
 def main():
     """主函数"""
