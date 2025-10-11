@@ -364,8 +364,14 @@ class PortManagerGUI:
                             state = parts[3]
                             pid = parts[4]
 
-                            # 存储PID
-                            self.current_pids.append(pid)
+                            # 验证PID是否为数字
+                            try:
+                                int(pid)  # 验证PID是数字
+                                # 存储PID
+                                self.current_pids.append(pid)
+                            except ValueError:
+                                # 如果PID不是数字，跳过这条记录
+                                continue
 
                             self.log_message(f"📍 本地地址: {local_address}", "info")
                             self.log_message(f"🌐 远程地址: {foreign_address}")
@@ -437,7 +443,14 @@ class PortManagerGUI:
                     if f':{port}' in line and ('LISTENING' in line or 'ESTABLISHED' in line):
                         parts = line.split()
                         if len(parts) >= 5:
-                            pids.add(parts[4])
+                            pid = parts[4]
+                            # 验证PID是否为数字
+                            try:
+                                int(pid)  # 验证PID是数字
+                                pids.add(pid)
+                            except ValueError:
+                                # 如果PID不是数字，跳过这条记录
+                                continue
 
                 if not pids:
                     self.log_message(f"端口 {port} 当前未被占用", "info")
@@ -514,20 +527,36 @@ class PortManagerGUI:
                 listening_ports = []
 
                 for line in lines:
+                    # 跳过空行和标题行
+                    if not line.strip() or line.startswith('TCP') or line.startswith('UDP'):
+                        continue
+
                     if 'LISTENING' in line:
                         parts = line.split()
+                        # 确保有足够的字段
                         if len(parts) >= 4:
                             local_address = parts[1]
-                            pid = parts[3]
+                            # 确保PID字段存在且不为空
+                            if len(parts) > 3 and parts[3]:
+                                pid = parts[3]
+                            else:
+                                continue
 
                             # 提取端口号
                             if ':' in local_address:
                                 port = local_address.split(':')[-1]
-                                listening_ports.append((port, local_address, pid))
+                                # 验证端口号是数字且在有效范围内
+                                try:
+                                    port_num = int(port)
+                                    if 1 <= port_num <= 65535:
+                                        listening_ports.append((port, local_address, pid))
+                                except ValueError:
+                                    # 如果端口不是数字，跳过这一行
+                                    continue
 
                 if listening_ports:
-                    # 按端口号排序
-                    listening_ports.sort(key=lambda x: int(x[0]) if x[0].isdigit() else 0)
+                    # 按端口号排序，使用更安全的排序方式
+                    listening_ports.sort(key=lambda x: int(x[0]) if x[0].isdigit() else 999999)
 
                     self.log_message(f"📊 共找到 {len(listening_ports)} 个监听端口:\n", "info")
 
