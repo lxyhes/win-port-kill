@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-端口管理工具 - 可以查询端口占用情况并终止相关进程
-macOS 风格设计 - 完整优化版
+NetGuard Pro v3.5 - 终极增强版
+集成：侧边栏布局、标签筛选、批量管理、实时监控、深度进程探测
 """
 
 import tkinter as tk
@@ -16,2004 +16,673 @@ import json
 import time
 from pathlib import Path
 from datetime import datetime
-from functools import lru_cache
-from collections import deque
 
-# 常量定义
-MAX_HISTORY = 10
+# 常量配置
+MAX_HISTORY = 20
 MONITOR_INTERVAL = 2
-REFRESH_INTERVAL = 1000  # ms
-MAX_LOG_LINES = 500
+MAX_LOG_LINES = 200
 
 class ToolTip:
-    """工具提示类"""
     def __init__(self, widget, text):
-        self.widget = widget
-        self.text = text
-        self.tooltip = None
+        self.widget, self.text, self.tip = widget, text, None
         self.widget.bind('<Enter>', self.show)
         self.widget.bind('<Leave>', self.hide)
-
-    def show(self, event=None):
+    def show(self, e=None):
+        if self.tip: return
         x, y, _, _ = self.widget.bbox("insert")
         x += self.widget.winfo_rootx() + 25
         y += self.widget.winfo_rooty() + 25
-
-        self.tooltip = tk.Toplevel(self.widget)
-        self.tooltip.wm_overrideredirect(True)
-        self.tooltip.wm_geometry(f"+{x}+{y}")
-
-        label = tk.Label(self.tooltip, text=self.text, 
-                        font=('SF Pro Text', 10),
-                        bg='#333333', fg='white',
-                        relief='solid', borderwidth=0,
-                        padx=8, pady=4)
-        label.pack()
-
-    def hide(self, event=None):
-        if self.tooltip:
-            self.tooltip.destroy()
-            self.tooltip = None
+        self.tip = tk.Toplevel(self.widget)
+        self.tip.wm_overrideredirect(True)
+        self.tip.wm_geometry(f"+{x}+{y}")
+        tk.Label(self.tip, text=self.text, font=('Microsoft YaHei UI', 9), bg='#333333', fg='white', padx=8, pady=4).pack()
+    def hide(self, e=None):
+        if self.tip: self.tip.destroy(); self.tip = None
 
 class PortManagerGUI:
     def __init__(self, root):
         self.root = root
-        self.root.title("NetGuard - 端口管理工具")
-        self.root.geometry("1400x900")
-        self.root.resizable(True, True)
+        self.root.title("NetGuard Pro - 端口管理助手")
+        self.root.geometry("1500x950")
+        self.root.configure(bg='#F3F4F6')
 
-        # 设置 macOS 风格背景色
-        self.root.configure(bg='#f5f5f7')
-
-        # 设置最小窗口大小
-        self.root.minsize(1200, 800)
-
-        # 网络连接监控相关变量
-        self.monitoring_active = False
-        self.current_connections = []
-        self.monitor_thread = None
-
-        # 缓存变量
-        self._process_cache = {}
-        self._cache_timestamp = 0
-        self._cache_ttl = 5  # 缓存有效期5秒
-
-        # 存储所有端口数据用于搜索
+        # 核心数据
         self.all_ports_data = []
-
-        # 设置窗口图标
-        try:
-            if os.path.exists("icon.ico"):
-                self.root.iconbitmap("icon.ico")
-        except:
-            pass
-
-        # 初始化历史记录
+        self.selected_ports_tags = set()
+        self.monitoring_active = False
+        self._process_cache = {}
+        self._cache_ttl = 10
         self.history_file = Path("port_history.json")
         self.port_history = self.load_port_history()
+        
+        # 自定义标签组配置
+        self.groups_file = Path("port_groups.json")
+        self.custom_groups = self.load_custom_groups()
+        # 如果是首次运行，初始化默认组
+        if not self.custom_groups:
+            self.custom_groups = {
+                "Web服务": "80,443", 
+                "数据库": "3306,5432,6379,27017", 
+                "开发调试": "3000,5000,8000,8080"
+            }
+            self.save_custom_groups()
 
-        # 日志缓冲区 - 限制内存使用
-        self.log_buffer = deque(maxlen=MAX_LOG_LINES)
-
-        # 自定义样式
         self.setup_styles()
-
         self.setup_ui()
 
+    def load_custom_groups(self):
+        """加载自定义端口组"""
+        try:
+            if self.groups_file.exists():
+                with open(self.groups_file, 'r', encoding='utf-8') as f:
+                    return json.load(f)
+        except: pass
+        return {}
+
+    def save_custom_groups(self):
+        """保存自定义端口组"""
+        try:
+            with open(self.groups_file, 'w', encoding='utf-8') as f:
+                json.dump(self.custom_groups, f, ensure_ascii=False, indent=2)
+        except Exception as e:
+            print(f"Save groups error: {e}")
+
     def setup_styles(self):
-        """设置现代化 UI 风格"""
         style = ttk.Style()
         style.theme_use('clam')
-
-        # === 字体配置 ===
-        # Windows 首选 Segoe UI，备选 Microsoft YaHei
-        self.fonts = {
-            'h1': ('Microsoft YaHei UI', 16, 'bold'),
-            'h2': ('Microsoft YaHei UI', 12, 'bold'),
-            'body': ('Microsoft YaHei UI', 10),
-            'mono': ('Consolas', 10),
-            'icon': ('Segoe UI Symbol', 12)
-        }
-
-        # === 现代配色方案 (扁平化/柔和) ===
         self.colors = {
-            # 品牌色 - 更加稳重的深蓝
-            'primary': '#2563EB',        # Modern Blue
-            'primary_hover': '#1D4ED8',
-            'primary_active': '#1E40AF',
-            'primary_light': '#EFF6FF',
-            
-            # 功能色
-            'danger': '#EF4444',         # Soft Red
-            'danger_hover': '#DC2626',
-            'success': '#10B981',        # Emerald Green
-            'success_hover': '#059669',
-            'warning': '#F59E0B',        # Amber
-            'warning_hover': '#D97706',
-            'info': '#3B82F6',           # Sky Blue
-            'info_hover': '#2563EB',
-            
-            # 界面底色
-            'bg': '#F3F4F6',             # Cool Gray 100
-            'card_bg': '#FFFFFF',
-            'sidebar_bg': '#FFFFFF',
-            
-            # 文本颜色
-            'text': '#111827',           # Gray 900
-            'text_secondary': '#6B7280', # Gray 500
-            'text_tertiary': '#9CA3AF',  # Gray 400
-            
-            # 边框和分割线
-            'border': '#E5E7EB',         # Gray 200
-            'divider': '#E5E7EB',
-            
-            # 终端/日志区域 - 深蓝灰风格 (Dracula/Nord 混合)
-            'terminal_bg': '#1E293B',    # Slate 800
-            'terminal_fg': '#E2E8F0',    # Slate 200
-            'terminal_green': '#34D399',
-            'terminal_red': '#F87171',
-            'terminal_blue': '#60A5FA',
-            'terminal_yellow': '#FBBF24',
-            'terminal_purple': '#A78BFA',
-            'terminal_cyan': '#22D3EE',
+            'primary': '#2563EB', 'primary_hover': '#1D4ED8', 'primary_light': '#EFF6FF',
+            'success': '#10B981', 'danger': '#EF4444', 'warning': '#F59E0B', 
+            'info': '#3B82F6', 'bg': '#F3F4F6', 'card_bg': '#FFFFFF', 
+            'text': '#111827', 'text_secondary': '#6B7280', 'text_tertiary': '#9CA3AF', 
+            'border': '#E5E7EB'
         }
-
-        # === 样式配置 ===
-        
-        # 通用按钮样式
-        for btn_type, color_key in [
-            ('Action', 'primary'),
-            ('Danger', 'danger'),
-            ('Info', 'info'),
-            ('Warning', 'warning'),
-            ('Success', 'success')
-        ]:
-            style.configure(f'{btn_type}.TButton',
-                           background=self.colors[color_key],
-                           foreground='white',
-                           borderwidth=0,
-                           focuscolor='none',
-                           font=self.fonts['body'],
-                           relief='flat',
-                           padding=(15, 8))
-                           
-            style.map(f'{btn_type}.TButton',
-                     background=[('active', self.colors[f'{color_key}_hover']),
-                               ('pressed', self.colors[f'{color_key}'])])
-
-        # 输入框样式
-        style.configure('Custom.TEntry',
-                       fieldbackground='white',
-                       borderwidth=1,
-                       relief='solid',
-                       font=self.fonts['body'],
-                       insertcolor=self.colors['primary'])
-
-        # 下拉框样式
-        style.configure('Custom.TCombobox',
-                       fieldbackground='white',
-                       borderwidth=1,
-                       relief='solid',
-                       arrowsize=12,
-                       font=self.fonts['body'])
-
-        # === Treeview (表格) 样式 ===
-        style.configure('Treeview',
-                       background='white',
-                       foreground=self.colors['text'],
-                       fieldbackground='white',
-                       font=('Microsoft YaHei UI', 10),
-                       rowheight=32,  # 增加行高，提升呼吸感
-                       borderwidth=0)
-        
-        style.configure('Treeview.Heading',
-                       font=('Microsoft YaHei UI', 10, 'bold'),
-                       background=self.colors['bg'],
-                       foreground=self.colors['text'],
-                       relief='flat',
-                       padding=(10, 8))
-        
-        style.map('Treeview',
-                 background=[('selected', self.colors['primary_light'])],
-                 foreground=[('selected', self.colors['primary'])])
-        
-        # 去除表头选中时的奇怪边框
-        style.map('Treeview.Heading',
-                 background=[('active', self.colors['border'])])
+        self.fonts = {
+            'h1': ('Microsoft YaHei UI', 16, 'bold'), 'h2': ('Microsoft YaHei UI', 11, 'bold'),
+            'body': ('Microsoft YaHei UI', 10), 'mono': ('Consolas', 10), 'icon': ('Segoe UI Symbol', 12)
+        }
+        style.configure('Treeview', background='white', font=self.fonts['body'], rowheight=40, borderwidth=0)
+        style.configure('Treeview.Heading', font=self.fonts['h2'], background='#F9FAFB', relief='flat')
+        style.map('Treeview', background=[('selected', '#DBEAFE')], foreground=[('selected', self.colors['primary'])])
 
     def setup_ui(self):
-        """设置UI界面 - 现代化布局"""
-        # 主容器
-        main_container = tk.Frame(self.root, bg=self.colors['bg'])
-        main_container.pack(fill=tk.BOTH, expand=True)
+        # 1. 顶部导航栏
+        header = tk.Frame(self.root, bg='white', height=75)
+        header.pack(side="top", fill="x")
+        tk.Frame(header, bg=self.colors['border'], height=1).pack(side="bottom", fill="x")
 
-        # 配置网格权重
-        self.root.columnconfigure(0, weight=1)
-        self.root.rowconfigure(0, weight=1)
-        main_container.columnconfigure(0, weight=1)
-        main_container.rowconfigure(1, weight=1)
-
-        # === 顶部工具栏 ===
-        toolbar = tk.Frame(main_container, bg=self.colors['card_bg'], height=70)
-        toolbar.grid(row=0, column=0, sticky=(tk.W, tk.E), padx=0, pady=0)
-        toolbar.grid_propagate(False)
+        tk.Label(header, text="🛡️ NetGuard Pro", font=self.fonts['h1'], fg=self.colors['primary'], bg='white').pack(side="left", padx=35)
         
-        # 底部阴影模拟 (使用细边框)
-        tk.Frame(toolbar, bg=self.colors['border'], height=1).pack(side=tk.BOTTOM, fill=tk.X)
+        top_ops = tk.Frame(header, bg='white')
+        top_ops.pack(side="right", padx=35)
+        self.create_top_btn(top_ops, "📥 导出数据", self.export_results).pack(side="right", padx=10)
+        self.create_top_btn(top_ops, "⚙️ 快捷键", self.show_shortcuts).pack(side="right", padx=10)
+        self.create_top_btn(top_ops, "ℹ️ 关于", self.show_about).pack(side="right", padx=10)
 
-        # Logo 和品牌区域
-        brand_frame = tk.Frame(toolbar, bg=self.colors['card_bg'])
-        brand_frame.pack(side=tk.LEFT, padx=24, pady=10)
+        # 2. 主体容器
+        container = tk.Frame(self.root, bg=self.colors['bg'])
+        container.pack(fill="both", expand=True, padx=35, pady=25)
+        
+        # --- 左侧: 控制面板 ---
+        sidebar = tk.Frame(container, bg=self.colors['bg'], width=380)
+        sidebar.pack(side="left", fill="y", padx=(0, 25))
+        sidebar.pack_propagate(False)
 
-        # 绘制 NetGuard Logo
-        self.logo_canvas = tk.Canvas(brand_frame, width=48, height=48,
-                                     bg=self.colors['card_bg'], highlightthickness=0)
-        self.logo_canvas.pack(side=tk.LEFT)
-        self.draw_netguard_logo(self.logo_canvas, 24, 24, 20)
-
-        # 品牌名称和标语
-        brand_text_frame = tk.Frame(brand_frame, bg=self.colors['card_bg'])
-        brand_text_frame.pack(side=tk.LEFT, padx=(12, 0))
-
-        title_label = tk.Label(brand_text_frame, text="NetGuard",
-                               font=self.fonts['h1'],
-                               fg=self.colors['primary'], bg=self.colors['card_bg'])
-        title_label.pack(anchor=tk.W)
-
-        subtitle_label = tk.Label(brand_text_frame, text="端口管理工具",
-                                  font=('Microsoft YaHei UI', 9),
-                                  fg=self.colors['text_secondary'], bg=self.colors['card_bg'])
-        subtitle_label.pack(anchor=tk.W)
-
-        # 工具栏按钮区域
-        toolbar_buttons = tk.Frame(toolbar, bg=self.colors['card_bg'])
-        toolbar_buttons.pack(side=tk.RIGHT, padx=24)
-
-        # 导出按钮
-        export_btn = tk.Button(toolbar_buttons, text="导出",
-                              command=self.export_results,
-                              bg=self.colors['card_bg'], fg=self.colors['primary'],
-                              font=self.fonts['body'],
-                              relief='flat', cursor='hand2',
-                              padx=12, pady=4,
-                              activebackground=self.colors['bg'],
-                              activeforeground=self.colors['primary_active'])
-        export_btn.pack(side=tk.RIGHT, padx=(0, 10))
-        ToolTip(export_btn, "导出结果到文件")
-
-        # 快捷键提示按钮
-        shortcut_btn = tk.Button(toolbar_buttons, text="⌘",
-                                command=self.show_shortcuts,
-                                bg=self.colors['card_bg'], fg=self.colors['text_secondary'],
-                                font=self.fonts['icon'],
-                                relief='flat', cursor='hand2',
-                                width=3,
-                                activebackground=self.colors['bg'])
-        shortcut_btn.pack(side=tk.RIGHT, padx=(0, 10))
-        ToolTip(shortcut_btn, "显示快捷键")
-
-        # 关于按钮
-        about_btn = tk.Button(toolbar_buttons, text="?",
-                              command=self.show_about,
-                              bg=self.colors['card_bg'], fg=self.colors['text_secondary'],
-                              font=self.fonts['icon'],
-                              relief='flat', cursor='hand2',
-                              width=3)
-        about_btn.pack(side=tk.RIGHT)
-        ToolTip(about_btn, "关于")
-
-        # === 内容区域 ===
-        content_frame = tk.Frame(main_container, bg=self.colors['bg'])
-        content_frame.grid(row=1, column=0, sticky=(tk.W, tk.E, tk.N, tk.S), padx=24, pady=24)
-        content_frame.columnconfigure(0, weight=1)
-        content_frame.rowconfigure(2, weight=1)
-
-        # 操作区域容器 - 三列布局
-        action_container = tk.Frame(content_frame, bg=self.colors['bg'])
-        action_container.grid(row=0, column=0, sticky=(tk.W, tk.E), pady=(0, 24))
-        action_container.columnconfigure(0, weight=1)
-        action_container.columnconfigure(1, weight=1)
-        action_container.columnconfigure(2, weight=1)
-
-        # === 端口操作卡片 ===
-        port_frame = self.create_mac_card(action_container, "端口操作", 0, 0)
-
-        # 端口输入区域
-        port_input_container = tk.Frame(port_frame, bg=self.colors['card_bg'])
-        port_input_container.pack(fill=tk.X, pady=(0, 16))
-
-        input_label = tk.Label(port_input_container, text="端口号 / 范围 (如: 8080 或 8000-9000)",
-                              font=self.fonts['body'],
-                              fg=self.colors['text_secondary'], bg=self.colors['card_bg'])
-        input_label.pack(anchor=tk.W, pady=(0, 8))
-
-        # 输入框容器
-        input_frame = tk.Frame(port_input_container, bg=self.colors['card_bg'])
-        input_frame.pack(fill=tk.X)
-
+        # 2.1 端口查询卡片
+        c1 = self.create_card(sidebar, "端口筛选与控制")
+        tk.Label(c1, text="手动查询 (支持 80, 8000-9000)", font=self.fonts['body'], bg='white', fg=self.colors['text_secondary']).pack(anchor="w", pady=(0,10))
         self.port_var = tk.StringVar()
-        self.port_entry = tk.Entry(input_frame, textvariable=self.port_var,
-                                    font=('Consolas', 12),
-                                    bg='white', fg=self.colors['text'],
-                                    relief='solid', borderwidth=1,
-                                    highlightthickness=2,
-                                    highlightcolor=self.colors['primary_light'],
-                                    highlightbackground=self.colors['border'])
-        self.port_entry.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 8), ipady=4)
+        self.port_entry = ttk.Combobox(c1, textvariable=self.port_var, font=self.fonts['mono'], values=self.port_history)
+        self.port_entry.pack(fill="x", pady=(0,15))
         self.port_entry.bind('<Return>', lambda e: self.query_port())
 
-        # 历史记录下拉框
-        self.history_var = tk.StringVar()
-        self.port_combo = ttk.Combobox(input_frame, textvariable=self.history_var, width=15,
-                                      values=self.port_history, state='readonly', style='Custom.TCombobox')
-        self.port_combo.pack(side=tk.LEFT, padx=(0, 8), ipady=4)
-        self.port_combo.bind('<<ComboboxSelected>>', self.on_history_selected)
+        # 自定义标签组区域
+        self.group_frame = tk.Frame(c1, bg='white')
+        self.group_frame.pack(fill="x", pady=(0,15))
+        self.render_custom_groups()
 
-        # 历史记录按钮
-        self.history_btn = tk.Button(input_frame, text="◷",
-                                     command=self.show_history_dialog,
-                                     bg=self.colors['bg'], fg=self.colors['text_secondary'],
-                                     font=self.fonts['icon'],
-                                     relief='flat', cursor='hand2',
-                                     activebackground=self.colors['border'],
-                                     width=3)
-        self.history_btn.pack(side=tk.LEFT)
-        ToolTip(self.history_btn, "历史记录")
-
-        # 按钮区域
-        button_container = tk.Frame(port_frame, bg=self.colors['card_bg'])
-        button_container.pack(fill=tk.X, pady=(4, 0))
-
-        self.query_btn = self.create_mac_button(button_container, "查询", self.query_port, self.colors['primary'])
-        self.query_btn.pack(side=tk.LEFT, padx=(0, 12))
-        ToolTip(self.query_btn, "查询端口占用情况")
-
-        self.kill_btn = self.create_mac_button(button_container, "终止", self.kill_process, self.colors['danger'])
-        self.kill_btn.pack(side=tk.LEFT, padx=(0, 12))
-        ToolTip(self.kill_btn, "终止占用端口的进程")
-
-        self.refresh_btn = self.create_mac_button(button_container, "刷新", self.refresh_all, self.colors['success'])
-        self.refresh_btn.pack(side=tk.LEFT)
-        ToolTip(self.refresh_btn, "刷新所有端口列表")
-
-        # === PID 快速操作卡片 ===
-        pid_frame = self.create_mac_card(action_container, "PID 快速操作", 0, 1)
-
-        pid_input_container = tk.Frame(pid_frame, bg=self.colors['card_bg'])
-        pid_input_container.pack(fill=tk.X, pady=(0, 16))
-
-        pid_label = tk.Label(pid_input_container, text="进程 ID",
-                            font=self.fonts['body'],
-                            fg=self.colors['text_secondary'], bg=self.colors['card_bg'])
-        pid_label.pack(anchor=tk.W, pady=(0, 8))
-
-        pid_input_frame = tk.Frame(pid_input_container, bg=self.colors['card_bg'])
-        pid_input_frame.pack(fill=tk.X)
-
-        self.pid_entry = tk.Entry(pid_input_frame, font=('Consolas', 12),
-                                   bg='white', fg=self.colors['text'],
-                                   relief='solid', borderwidth=1,
-                                   highlightthickness=2,
-                                   highlightcolor=self.colors['primary_light'],
-                                   highlightbackground=self.colors['border'])
-        self.pid_entry.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 8), ipady=4)
-        self.pid_entry.bind('<Return>', lambda e: self.kill_by_pid())
-
-        # 复制按钮
-        self.copy_pid_btn = tk.Button(pid_input_frame, text=" 复制 ",
-                                      command=self.copy_pid,
-                                      bg=self.colors['primary'], fg='white',
-                                      font=self.fonts['body'],
-                                      relief='flat', cursor='hand2',
-                                      padx=12, pady=4,
-                                      borderwidth=0,
-                                      activebackground=self.colors['primary_hover'],
-                                      activeforeground='white')
-        self.copy_pid_btn.pack(side=tk.LEFT, ipadx=5)
-        self.copy_pid_btn.bind('<Enter>', lambda e: self.copy_pid_btn.config(bg=self.colors['primary_hover']))
-        self.copy_pid_btn.bind('<Leave>', lambda e: self.copy_pid_btn.config(bg=self.colors['primary']))
-        ToolTip(self.copy_pid_btn, "复制PID到剪贴板")
-
-        pid_button_container = tk.Frame(pid_frame, bg=self.colors['card_bg'])
-        pid_button_container.pack(fill=tk.X, pady=(4, 0))
-
-        self.extract_pid_btn = self.create_mac_button(pid_button_container, "提取", self.extract_pid, self.colors['info'], width=6)
-        self.extract_pid_btn.pack(side=tk.LEFT, padx=(0, 12))
-        ToolTip(self.extract_pid_btn, "从查询结果提取PID")
-
-        self.kill_pid_btn = self.create_mac_button(pid_button_container, "杀掉", self.kill_by_pid, self.colors['danger'], width=6)
-        self.kill_pid_btn.pack(side=tk.LEFT)
-        ToolTip(self.kill_pid_btn, "杀掉指定PID的进程")
-
-        self.details_btn = self.create_mac_button(pid_button_container, "详情", self.show_process_details_dialog, self.colors['warning'], width=6)
-        self.details_btn.pack(side=tk.LEFT, padx=(12, 0))
-        ToolTip(self.details_btn, "查看进程详细信息")
-
-        # === 网络连接监控卡片 ===
-        monitor_frame = self.create_mac_card(action_container, "连接监控", 0, 2)
-
-        monitor_control_container = tk.Frame(monitor_frame, bg=self.colors['card_bg'])
-        monitor_control_container.pack(fill=tk.X, pady=(0, 12))
-
-        status_frame = tk.Frame(monitor_control_container, bg=self.colors['card_bg'])
-        status_frame.pack(fill=tk.X, pady=(0, 8))
-
-        status_label = tk.Label(status_frame, text="状态",
-                              font=self.fonts['body'],
-                              fg=self.colors['text_secondary'], bg=self.colors['card_bg'])
-        status_label.pack(side=tk.LEFT)
-
-        self.monitor_status_label = tk.Label(status_frame, text="未监控",
-                                           font=self.fonts['h2'],
-                                           fg=self.colors['text_tertiary'], bg=self.colors['card_bg'])
-        self.monitor_status_label.pack(side=tk.RIGHT)
-
-        monitor_button_container = tk.Frame(monitor_frame, bg=self.colors['card_bg'])
-        monitor_button_container.pack(fill=tk.X)
-
-        self.start_monitor_btn = self.create_mac_button(monitor_button_container, "开始", self.start_monitoring, self.colors['success'])
-        self.start_monitor_btn.pack(side=tk.LEFT, padx=(0, 8))
-        ToolTip(self.start_monitor_btn, "开始监控网络连接")
-
-        self.stop_monitor_btn = self.create_mac_button(monitor_button_container, "停止", self.stop_monitoring, self.colors['warning'])
-        self.stop_monitor_btn.pack(side=tk.LEFT, padx=(0, 8))
-        self.stop_monitor_btn.config(state='disabled')
-        ToolTip(self.stop_monitor_btn, "停止监控")
-
-        self.refresh_connections_btn = self.create_mac_button(monitor_button_container, "刷新", self.refresh_connections, self.colors['info'])
-        self.refresh_connections_btn.pack(side=tk.LEFT)
-        ToolTip(self.refresh_connections_btn, "刷新连接信息")
-
-        # 连接信息显示区域
-        connections_frame = tk.Frame(monitor_frame, bg=self.colors['terminal_bg'])
-        connections_frame.pack(fill=tk.BOTH, expand=True, pady=(12, 0))
-
-        self.connections_text = scrolledtext.ScrolledText(
-            connections_frame,
-            wrap=tk.WORD,
-            height=10,
-            font=self.fonts['mono'],
-            bg=self.colors['terminal_bg'],
-            fg=self.colors['terminal_fg'],
-            insertbackground='white',
-            selectbackground=self.colors['primary'],
-            relief='flat',
-            borderwidth=0,
-            padx=12,
-            pady=12
-        )
-        self.connections_text.pack(fill=tk.BOTH, expand=True)
-
-        # 配置连接监控文本样式
-        self.connections_text.tag_config("header", font=self.fonts['h2'], foreground=self.colors['terminal_blue'])
-        self.connections_text.tag_config("success", foreground=self.colors['terminal_green'])
-        self.connections_text.tag_config("error", foreground=self.colors['terminal_red'])
-        self.connections_text.tag_config("info", foreground=self.colors['terminal_fg'])
-        self.connections_text.tag_config("warning", foreground=self.colors['terminal_yellow'])
-        self.connections_text.tag_config("highlight", background=self.colors['text_secondary'], foreground='#ffffff')
-
-        # 添加监控说明文本
-        monitor_info = "网络连接监控\n" + "─"*40 + "\n"
-        monitor_info += "点击「开始」实时查看网络连接\n"
-        monitor_info += "支持监控指定端口的连接详情\n"
-        monitor_info += "─"*40 + "\n\n"
-        self.connections_text.insert(tk.END, monitor_info, "info")
-
-        # === 搜索和结果显示区域 (重构为 Treeview 表格) ===
-        result_section = tk.Frame(content_frame, bg=self.colors['card_bg'])
-        result_section.grid(row=1, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
-        result_section.columnconfigure(0, weight=1)
-        result_section.rowconfigure(2, weight=3) # 表格占据主要空间
-        result_section.rowconfigure(4, weight=1) # 日志占据次要空间
+        # 动态标签区
+        tk.Label(c1, text="活跃端口 (点击即选):", font=self.fonts['body'], bg='white', fg=self.colors['text_secondary']).pack(anchor="w", pady=(5,8))
+        self.tag_container = tk.Frame(c1, bg='white')
+        self.tag_container.pack(fill="both", expand=True)
         
-        # 给结果区域添加一点阴影效果 (通过边框模拟)
-        result_section.config(highlightbackground=self.colors['border'], highlightthickness=1)
+        self.create_btn(c1, "全量刷新列表 (F5)", self.refresh_all, self.colors['success']).pack(fill="x", pady=(20,0))
 
-        # 搜索栏
-        search_frame = tk.Frame(result_section, bg=self.colors['card_bg'], height=60)
-        search_frame.grid(row=0, column=0, sticky=(tk.W, tk.E), padx=20, pady=(16, 0))
-        search_frame.pack_propagate(False)
+        # 2.2 进程管理卡片
+        c2 = self.create_card(sidebar, "进程管理中心")
+        tk.Label(c2, text="选中进程 PID", font=self.fonts['body'], bg='white', fg=self.colors['text_secondary']).pack(anchor="w", pady=(0,10))
+        
+        pid_f = tk.Frame(c2, bg='white')
+        pid_f.pack(fill="x", pady=(0,15))
+        self.pid_entry = tk.Entry(pid_f, font=self.fonts['mono'], relief="solid", borderwidth=1)
+        self.pid_entry.pack(side="left", fill="x", expand=True, ipady=6)
+        tk.Button(pid_f, text="提取", font=self.fonts['body'], bg=self.colors['info'], fg='white', relief='flat', command=self.extract_pid_manual).pack(side="right", padx=(5,0), ipady=3)
 
-        search_label = tk.Label(search_frame, text="搜索:",
-                               font=self.fonts['body'],
-                               fg=self.colors['text_secondary'], bg=self.colors['card_bg'])
-        search_label.pack(side=tk.LEFT, padx=(0, 12))
+        self.create_btn(c2, "🚀 重启选中的服务", self.restart_process, self.colors['success']).pack(fill="x", pady=5)
+        self.create_btn(c2, "🛑 终止选中的进程", self.kill_by_pid, self.colors['danger']).pack(fill="x", pady=5)
+        
+        link_f = tk.Frame(c2, bg='white')
+        link_f.pack(fill="x", pady=(12,0))
+        tk.Button(link_f, text="复制 PID", font=self.fonts['body'], bg='white', fg=self.colors['primary'], relief="flat", command=self.copy_pid).pack(side="left")
+        tk.Button(link_f, text="性能详情", font=self.fonts['body'], bg='white', fg=self.colors['primary'], relief="flat", command=self.show_process_details_dialog).pack(side="right")
 
+        # 2.3 监控卡片
+        c3 = self.create_card(sidebar, "连接实时监控")
+        m_stat = tk.Frame(c3, bg='white')
+        m_stat.pack(fill="x", pady=(0,15))
+        tk.Label(m_stat, text="监控状态:", font=self.fonts['body'], bg='white').pack(side="left")
+        self.monitor_status_label = tk.Label(m_stat, text="Idle", font=self.fonts['h2'], fg=self.colors['text_tertiary'], bg='white')
+        self.monitor_status_label.pack(side="right")
+        
+        m_btns = tk.Frame(c3, bg='white')
+        m_btns.pack(fill="x")
+        self.start_monitor_btn = self.create_btn(m_btns, "开启监控", self.start_monitoring, self.colors['info'])
+        self.start_monitor_btn.pack(side="left", fill="x", expand=True, padx=(0,5))
+        self.stop_monitor_btn = self.create_btn(m_btns, "停止", self.stop_monitoring, self.colors['warning'])
+        self.stop_monitor_btn.pack(side="left", fill="x", expand=True, padx=(5,0))
+        self.stop_monitor_btn.config(state="disabled")
+
+        # --- 右侧: 数据展示中心 ---
+        right_panel = tk.Frame(container, bg='white', relief="solid", borderwidth=1)
+        right_panel.pack(side="right", fill="both", expand=True)
+        right_panel.config(highlightbackground=self.colors['border'])
+
+        # 搜索与过滤
+        s_bar = tk.Frame(right_panel, bg='white', height=65)
+        s_bar.pack(fill="x", padx=30, pady=(20, 10))
+        tk.Label(s_bar, text="🔍", font=self.fonts['icon'], bg='white').pack(side="left")
         self.search_var = tk.StringVar()
-        self.search_entry = tk.Entry(search_frame, textvariable=self.search_var,
-                                     font=self.fonts['body'],
-                                     bg='white', fg=self.colors['text'],
-                                     relief='solid', borderwidth=1,
-                                     highlightthickness=1,
-                                     highlightcolor=self.colors['primary'],
-                                     highlightbackground=self.colors['border'])
-        self.search_entry.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 12), ipady=4)
+        self.search_entry = tk.Entry(s_bar, textvariable=self.search_var, font=self.fonts['body'], relief="flat", bg="#F9FAFB")
+        self.search_entry.pack(side="left", fill="x", expand=True, padx=15, ipady=10)
         self.search_entry.bind('<KeyRelease>', self.on_search)
 
-        search_btn = tk.Button(search_frame, text="🔍",
-                              command=self.filter_ports,
-                              bg=self.colors['card_bg'], fg=self.colors['primary'],
-                              font=self.fonts['icon'],
-                              relief='flat', cursor='hand2',
-                              activebackground=self.colors['card_bg'])
-        search_btn.pack(side=tk.LEFT)
-        ToolTip(search_btn, "搜索端口或进程")
+        # --- 新增: 快捷操作工具栏 ---
+        actions_bar = tk.Frame(right_panel, bg='white', height=50)
+        actions_bar.pack(fill="x", padx=30, pady=(0, 15))
+        
+        # 1. 重启服务
+        self.create_action_btn(actions_bar, "🚀 重启服务", self.restart_process, self.colors['success']).pack(side="left", padx=(0, 10))
+        # 2. 终止进程
+        self.create_action_btn(actions_bar, "🛑 终止进程", self.kill_by_pid, self.colors['danger']).pack(side="left", padx=10)
+        # 3. 性能详情
+        self.create_action_btn(actions_bar, "📊 性能详情", self.show_process_details_dialog, self.colors['info']).pack(side="left", padx=10)
+        # 4. 开启监控
+        self.create_action_btn(actions_bar, "🔍 开启监控", self.start_monitoring_selected, self.colors['warning']).pack(side="left", padx=10)
+        
+        # 5. 复制组 (小按钮)
+        tk.Frame(actions_bar, bg=self.colors['border'], width=1).pack(side="left", fill="y", padx=15)
+        self.create_text_link(actions_bar, "📋 复制PID", self.copy_pid).pack(side="left", padx=5)
+        self.create_text_link(actions_bar, "📋 复制端口", self.copy_port_selected).pack(side="left", padx=5)
 
-        clear_search_btn = tk.Button(search_frame, text="清除",
-                                    command=self.clear_search,
-                                    bg=self.colors['card_bg'], fg=self.colors['text_secondary'],
-                                    font=self.fonts['body'],
-                                    relief='flat', cursor='hand2',
-                                    activebackground=self.colors['card_bg'])
-        clear_search_btn.pack(side=tk.LEFT, padx=(8, 0))
-
-        # 表格标题栏
-        result_header = tk.Frame(result_section, bg=self.colors['card_bg'], height=40)
-        result_header.grid(row=1, column=0, sticky=(tk.W, tk.E), padx=20, pady=(8, 0))
-        result_header.pack_propagate(False)
-
-        result_title = tk.Label(result_header, text="操作日志",
-                               font=self.fonts['h2'],
-                               fg=self.colors['text'], bg=self.colors['card_bg'])
-        result_title.pack(side=tk.LEFT)
+        # 表格视图
+        tree_f = tk.Frame(right_panel, bg='white')
+        tree_f.pack(fill="both", expand=True, padx=30)
+        cols = ("port", "pid", "name", "local", "remote", "status")
+        self.tree = ttk.Treeview(tree_f, columns=cols, show="headings", selectmode="extended")
+        for col, head, w in [("port", "端口", 100), ("pid", "PID", 100), ("name", "进程名称", 280), ("local", "本地地址", 220), ("remote", "远程地址", 220), ("status", "状态", 130)]:
+            self.tree.heading(col, text=head, anchor="w", command=lambda c=col: self.sort_tree(c, False))
+            self.tree.column(col, width=w)
         
-        # === Treeview 表格区域 ===
-        tree_frame = tk.Frame(result_section, bg=self.colors['card_bg'])
-        tree_frame.grid(row=2, column=0, sticky=(tk.W, tk.E, tk.N, tk.S), padx=20, pady=0)
-        
-        # 定义列
-        columns = ("port", "pid", "name", "local", "remote", "status")
-        self.tree = ttk.Treeview(tree_frame, columns=columns, show="headings", selectmode="browse")
-        
-        # 定义表头
-        self.tree.heading("port", text="端口", anchor=tk.W, command=lambda: self.sort_tree("port", False))
-        self.tree.heading("pid", text="PID", anchor=tk.W, command=lambda: self.sort_tree("pid", False))
-        self.tree.heading("name", text="进程名称", anchor=tk.W, command=lambda: self.sort_tree("name", False))
-        self.tree.heading("local", text="本地地址", anchor=tk.W)
-        self.tree.heading("remote", text="远程地址", anchor=tk.W)
-        self.tree.heading("status", text="状态", anchor=tk.W)
-        
-        # 定义列宽
-        self.tree.column("port", width=80, minwidth=60)
-        self.tree.column("pid", width=80, minwidth=60)
-        self.tree.column("name", width=200, minwidth=150)
-        self.tree.column("local", width=150, minwidth=120)
-        self.tree.column("remote", width=150, minwidth=120)
-        self.tree.column("status", width=120, minwidth=100)
-        
-        # 滚动条
-        vsb = ttk.Scrollbar(tree_frame, orient="vertical", command=self.tree.yview)
+        vsb = ttk.Scrollbar(tree_f, orient="vertical", command=self.tree.yview)
         self.tree.configure(yscrollcommand=vsb.set)
+        self.tree.pack(side="left", fill="both", expand=True)
+        vsb.pack(side="right", fill="y")
         
-        self.tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-        vsb.pack(side=tk.RIGHT, fill=tk.Y)
-        
-        # 绑定事件
         self.tree.bind("<<TreeviewSelect>>", self.on_tree_select)
-        self.tree.bind("<Button-3>", self.show_context_menu) # 右键菜单
+        self.tree.bind("<Button-3>", self.show_context_menu)
         self.tree.bind("<Double-1>", lambda e: self.show_process_details_dialog())
 
-        # 日志分隔线
-        tk.Frame(result_section, bg=self.colors['divider'], height=1).grid(row=3, column=0, sticky=(tk.W, tk.E), pady=12)
-
-        # === 底部日志区域 (小型) ===
-        log_frame = tk.Frame(result_section, bg=self.colors['card_bg'], height=150)
-        log_frame.grid(row=4, column=0, sticky=(tk.W, tk.E, tk.N, tk.S), padx=20, pady=(0, 20))
-        log_frame.pack_propagate(False) # 固定高度
-        
-        log_label = tk.Label(log_frame, text="操作日志",
-                           font=('Microsoft YaHei UI', 9, 'bold'),
-                           fg=self.colors['text_tertiary'], bg=self.colors['card_bg'])
-        log_label.pack(anchor=tk.W, pady=(0, 4))
-
-        # 结果文本框 - 现代编辑器风格 (禁用 undo 以提升性能)
-        self.result_text = scrolledtext.ScrolledText(
-            log_frame,
-            wrap=tk.WORD,
-            height=6,
-            font=('Consolas', 9),
-            bg=self.colors['bg'], # 浅色背景以示区别
-            fg=self.colors['text_secondary'],
-            insertbackground=self.colors['primary'],
-            selectbackground=self.colors['primary_light'],
-            relief='flat',
-            borderwidth=1,
-            padx=8,
-            pady=8,
-            undo=False
-        )
-        self.result_text.pack(fill=tk.BOTH, expand=True)
-
-        # 配置文本样式
-        self.result_text.tag_config("header", font=('Consolas', 9, 'bold'), foreground=self.colors['primary'])
+        # 底部日志反馈
+        self.status_var = tk.StringVar(value="就绪")
+        fb_f = tk.Frame(right_panel, bg="#F9FAFB", height=150)
+        fb_f.pack(fill="x")
+        fb_f.pack_propagate(False)
+        tk.Label(fb_f, textvariable=self.status_var, font=('Microsoft YaHei UI', 9, 'bold'), bg="#F9FAFB", fg=self.colors['text_tertiary']).pack(anchor="w", padx=30, pady=8)
+        self.result_text = scrolledtext.ScrolledText(fb_f, font=self.fonts['mono'], bg='#F9FAFB', borderwidth=0, padx=30, undo=False)
+        self.result_text.pack(fill="both", expand=True)
         self.result_text.tag_config("success", foreground=self.colors['success'])
         self.result_text.tag_config("error", foreground=self.colors['danger'])
-        self.result_text.tag_config("info", foreground=self.colors['text_secondary'])
         self.result_text.tag_config("warning", foreground=self.colors['warning'])
-        self.result_text.tag_config("pid", background=self.colors['bg'], foreground=self.colors['primary'], font=('Consolas', 9, 'bold'))
 
-        # 添加欢迎文本
-        welcome_text = "NetGuard 就绪. 右键列表项可快速操作.\n"
-        self.result_text.insert(tk.END, welcome_text, "info")
-
-        # 存储查询到的PID
-        self.current_pids = []
-
-        # 底部状态栏 - 极简风格
-        status_container = tk.Frame(content_frame, bg=self.colors['divider'], height=1)
-        status_container.grid(row=2, column=0, sticky=(tk.W, tk.E), pady=(24, 0))
-
-        status_bar = tk.Frame(content_frame, bg=self.colors['bg'])
-        status_bar.grid(row=3, column=0, sticky=(tk.W, tk.E), pady=(12, 0))
-
-        self.status_var = tk.StringVar()
-        self.status_var.set("就绪")
-
-        status_label = tk.Label(status_bar, textvariable=self.status_var,
-                              font=self.fonts['body'],
-                              fg=self.colors['text_secondary'], bg=self.colors['bg'])
-        status_label.pack(side=tk.LEFT)
-
-        version_label = tk.Label(status_bar, text="v2.0",
-                               font=self.fonts['body'],
-                               fg=self.colors['text_tertiary'], bg=self.colors['bg'])
-        version_label.pack(side=tk.RIGHT)
-
-        # 设置窗口关闭事件
+        # 注册快捷键
+        self.root.bind('<F5>', lambda e: self.refresh_all())
+        self.root.bind('<Control-f>', lambda e: self.search_entry.focus_set())
         self.root.protocol("WM_DELETE_WINDOW", self.on_closing)
-
-        # 初始化时显示所有端口
         self.refresh_all()
 
-        # 设置焦点
-        self.port_entry.focus_set()
-
-        # 绑定快捷键
-        self.root.bind('<Control-r>', lambda e: self.refresh_all())
-        self.root.bind('<F5>', lambda e: self.refresh_all())
-        self.root.bind('<Control-q>', lambda e: self.root.quit())
-        self.root.bind('<F1>', lambda e: self.show_about())
-        self.root.bind('<Control-e>', lambda e: self.export_results())
-        self.root.bind('<Control-f>', lambda e: self.search_entry.focus_set())
-
-    def update_tree_data(self, ports_data):
-        """更新 Treeview 数据"""
-        # 1. 清空旧数据
-        for item in self.tree.get_children():
-            self.tree.delete(item)
-            
-        # 2. 插入新数据
-        for data in ports_data:
-            values = (
-                data['port'],
-                data['pid'],
-                data['name'],
-                data.get('address', ''),
-                data.get('remote', ''),
-                data.get('status', '')
-            )
-            self.tree.insert("", tk.END, values=values)
-            
-        # 3. 更新状态
-        self.update_status(f"列表已更新 - 共 {len(ports_data)} 个项目")
-
-    def on_tree_select(self, event):
-        """表格行选择事件 - 自动填充 PID 和 端口"""
-        selected_items = self.tree.selection()
-        if not selected_items:
-            return
-            
-        item = selected_items[0]
-        values = self.tree.item(item, "values")
+    # --- 自定义标签组逻辑 ---
+    def render_custom_groups(self):
+        """渲染自定义标签组按钮 (带醒目的新增入口)"""
+        if not hasattr(self, 'group_frame'): return
+        for widget in self.group_frame.winfo_children(): widget.destroy()
         
-        if values:
-            port, pid = values[0], values[1]
+        # 1. 标题行
+        header = tk.Frame(self.group_frame, bg='white')
+        header.pack(fill="x", pady=(0, 10))
+        tk.Label(header, text="我的常用分组:", font=self.fonts['h2'], bg='white', fg=self.colors['text']).pack(side="left")
+        # 管理链接
+        tk.Button(header, text="⚙️ 管理列表", font=('Microsoft YaHei UI', 8), bg='white', fg=self.colors['text_secondary'], 
+                 relief="flat", cursor="hand2", command=self.show_group_editor).pack(side="right")
+        
+        # 2. 标签胶囊区
+        tag_container = tk.Frame(self.group_frame, bg='white')
+        tag_container.pack(fill="x", pady=(0, 15))
+        
+        current_row = None
+        for i, (name, ports) in enumerate(self.custom_groups.items()):
+            if i % 3 == 0:
+                current_row = tk.Frame(tag_container, bg='white')
+                current_row.pack(fill="x", pady=2)
             
-            # 填充端口
-            self.port_entry.delete(0, tk.END)
-            self.port_entry.insert(0, port)
-            
-            # 填充PID
-            self.pid_entry.delete(0, tk.END)
-            self.pid_entry.insert(0, pid)
-            
-            self.update_status(f"已选中: 端口 {port} (PID {pid})")
+            btn = tk.Button(current_row, text=name, font=('Microsoft YaHei UI', 8), bg=self.colors['bg'], 
+                           relief="flat", cursor="hand2", padx=10, pady=4,
+                           command=lambda p=ports: [self.port_var.set(p), self.query_port()])
+            btn.pack(side="left", padx=2)
 
-    def show_context_menu(self, event):
-        """显示右键菜单"""
-        item = self.tree.identify_row(event.y)
-        if not item:
-            return
-            
-        # 选中该行
-        self.tree.selection_set(item)
-        self.on_tree_select(None)
+        # 3. 醒目的“新增”大按钮 (放在卡片底部)
+        add_btn = tk.Button(self.group_frame, text="➕ 添加自定义筛选分组", font=self.fonts['body'], 
+                           bg=self.colors['primary_light'], fg=self.colors['primary'], 
+                           relief="flat", cursor="hand2", pady=8,
+                           command=lambda: self.show_group_editor(start_new=True))
+        add_btn.pack(fill="x", pady=(5, 0))
+        add_btn.bind('<Enter>', lambda e: add_btn.config(bg='#DBEAFE'))
+        add_btn.bind('<Leave>', lambda e: add_btn.config(bg=self.colors['primary_light']))
+
+    def show_group_editor(self, start_new=False):
+        """显示绝对可见的标签组编辑器"""
+        d = tk.Toplevel(self.root)
+        d.title("管理我的端口组")
+        d.geometry("600x550")
+        d.configure(bg='white')
+        d.transient(self.root)
+        d.grab_set()
         
-        # 创建菜单
-        menu = tk.Menu(self.root, tearoff=0)
-        menu.add_command(label="终止进程", command=self.kill_by_pid, foreground=self.colors['danger'])
-        menu.add_command(label="复制 PID", command=self.copy_pid)
-        menu.add_command(label="查看详情", command=self.show_process_details_dialog)
-        menu.add_separator()
-        menu.add_command(label="复制端口号", command=lambda: self.copy_to_clipboard(self.port_entry.get()))
+        # 居中显示
+        d.update_idletasks()
+        x = (self.root.winfo_x() + (self.root.winfo_width() // 2)) - 300
+        y = (self.root.winfo_y() + (self.root.winfo_height() // 2)) - 275
+        d.geometry(f"+{x}+{y}")
+
+        # === 布局分层：先 pack 底部，再 pack 顶部，最后 pack 中间 ===
         
-        menu.post(event.x_root, event.y_root)
+        # 1. 底部操作按钮栏 (最先 pack，锁死在底部)
+        btn_f = tk.Frame(d, bg='#F3F4F6', pady=20, borderwidth=1, relief="solid", highlightthickness=0)
+        btn_f.config(highlightbackground=self.colors['border'])
+        btn_f.pack(side="bottom", fill="x")
 
-    def sort_tree(self, col, reverse):
-        """表格排序"""
-        l = [(self.tree.set(k, col), k) for k in self.tree.get_children('')]
+        # 2. 顶部表单区
+        input_f = tk.Frame(d, bg='white', padx=30, pady=20)
+        input_f.pack(side="top", fill="x")
         
-        # 尝试按数字排序
-        try:
-            l.sort(key=lambda t: int(t[0]), reverse=reverse)
-        except ValueError:
-            l.sort(reverse=reverse)
-
-        # 移动行
-        for index, (val, k) in enumerate(l):
-            self.tree.move(k, '', index)
-
-        # 切换下次排序顺序
-        self.tree.heading(col, command=lambda: self.sort_tree(col, not reverse))
-
-    def copy_to_clipboard(self, text):
-        self.root.clipboard_clear()
-        self.root.clipboard_append(text)
-        self.update_status(f"已复制: {text}")
-
-    def create_mac_card(self, parent, title, row, column):
-        """创建现代风格卡片 - 带阴影效果模拟"""
-        # 外层容器用于模拟边框/阴影
-        outer_frame = tk.Frame(parent, bg=self.colors['border'], padx=1, pady=1)
-        outer_frame.grid(row=row, column=column, sticky=(tk.W, tk.E, tk.N, tk.S), padx=12, pady=8)
+        tk.Label(input_f, text="分组名称:", font=self.fonts['body'], bg='white').pack(anchor="w")
+        name_var = tk.StringVar()
+        name_ent = tk.Entry(input_f, textvariable=name_var, font=self.fonts['body'], relief="solid", borderwidth=1)
+        name_ent.pack(fill="x", pady=(5, 15), ipady=5)
         
-        # 内层内容
-        frame = tk.Frame(outer_frame, bg=self.colors['card_bg'])
-        frame.pack(fill=tk.BOTH, expand=True)
-        frame.configure(padx=24, pady=24)
+        tk.Label(input_f, text="端口列表 (逗号分隔):", font=self.fonts['body'], bg='white').pack(anchor="w")
+        ports_var = tk.StringVar()
+        ports_ent = tk.Entry(input_f, textvariable=ports_var, font=self.fonts['body'], relief="solid", borderwidth=1)
+        ports_ent.pack(fill="x", pady=(5, 5), ipady=5)
+        tk.Label(input_f, text="例如: 80, 443, 8080-8090", font=('Arial', 8), bg='white', fg=self.colors['text_tertiary']).pack(anchor="w")
 
-        # 卡片标题
-        title_label = tk.Label(frame, text=title,
-                              font=self.fonts['h2'],
-                              fg=self.colors['text'], bg=self.colors['card_bg'])
-        title_label.pack(anchor=tk.W, pady=(0, 16))
-
-        # 分隔线
-        divider = tk.Frame(frame, height=1, bg=self.colors['divider'])
-        divider.pack(fill=tk.X, pady=(0, 20))
-
-        return frame
-
-    def create_mac_button(self, parent, text, command, color, width=None):
-        """创建现代扁平风格按钮"""
-        btn = tk.Button(parent, text=text,
-                       command=command,
-                       bg=color, fg='white',
-                       font=self.fonts['body'],
-                       relief='flat', cursor='hand2',
-                       padx=20, pady=8,
-                       activebackground=self._darken_color(color),
-                       activeforeground='white',
-                       borderwidth=0,
-                       width=width)
+        # 3. 中间列表区 (自动填满剩余空间)
+        tk.Label(d, text=" 已有分组列表 (点击可编辑):", font=self.fonts['h2'], bg='white', fg=self.colors['text_secondary']).pack(anchor="w", padx=30)
+        list_f = tk.Frame(d, bg='white', padx=30, pady=10)
+        list_f.pack(fill="both", expand=True)
         
-        # 添加悬停效果
+        cols = ("name", "ports")
+        tree = ttk.Treeview(list_f, columns=cols, show="headings", height=5)
+        tree.heading("name", text="名称"); tree.column("name", width=150)
+        tree.heading("ports", text="端口定义"); tree.column("ports", width=300)
+        tree.pack(side="left", fill="both", expand=True)
+        
+        vsb = ttk.Scrollbar(list_f, orient="vertical", command=tree.yview)
+        tree.configure(yscrollcommand=vsb.set); vsb.pack(side="right", fill="y")
+
+        # --- 内部逻辑函数 ---
+        def refresh_list():
+            for i in tree.get_children(): tree.delete(i)
+            for n in sorted(self.custom_groups.keys()):
+                tree.insert("", "end", values=(n, self.custom_groups[n]))
+
+        def reset_form():
+            name_var.set(""); ports_var.set("")
+            tree.selection_remove(tree.selection())
+            name_ent.focus_set()
+
+        def save_action():
+            n, p = name_var.get().strip(), ports_var.get().strip().replace('，', ',')
+            if not n or not p: return messagebox.showwarning("提示", "请完整填写名称和端口")
+            self.custom_groups[n] = p
+            self.save_custom_groups()
+            self.render_custom_groups()
+            refresh_list()
+            messagebox.showinfo("成功", f"分组 '{n}' 已保存")
+
+        def delete_action():
+            n = name_var.get().strip()
+            if n in self.custom_groups and messagebox.askyesno("确认", f"确定删除 '{n}'?"):
+                del self.custom_groups[n]
+                self.save_custom_groups()
+                self.render_custom_groups()
+                refresh_list()
+                reset_form()
+
+        tree.bind("<<TreeviewSelect>>", lambda e: [name_var.set(tree.item(tree.selection()[0], "values")[0]), 
+                                                  ports_var.set(tree.item(tree.selection()[0], "values")[1])] if tree.selection() else None)
+        
+        # 按钮摆放 (由于 btn_f 是 side="bottom"，这里的按钮会整齐排列在最下方)
+        tk.Button(btn_f, text="✨ 新建清空", command=reset_form, bg=self.colors['info'], fg='white', relief="flat", font=self.fonts['body'], padx=15, pady=8).pack(side="left", padx=(50, 10))
+        tk.Button(btn_f, text="💾 保存/更新", command=save_action, bg=self.colors['primary'], fg='white', relief="flat", font=self.fonts['body'], padx=20, pady=8).pack(side="left", padx=10)
+        tk.Button(btn_f, text="🗑️ 删除选中", command=delete_action, bg=self.colors['danger'], fg='white', relief="flat", font=self.fonts['body'], padx=15, pady=8).pack(side="left", padx=10)
+
+        refresh_list()
+        if start_new: reset_form()
+        name_ent.focus_set()
+
+    def create_action_btn(self, parent, text, cmd, color):
+        """创建带 Emoji 的圆角感动作按钮"""
+        btn = tk.Button(parent, text=text, command=cmd, bg=color, fg='white', 
+                       font=self.fonts['h2'], relief='flat', cursor='hand2', padx=15, pady=6)
         btn.bind('<Enter>', lambda e: btn.config(bg=self._lighten_color(color)))
         btn.bind('<Leave>', lambda e: btn.config(bg=color))
-        
         return btn
 
-    def _darken_color(self, color):
-        """将颜色变暗用于按钮按下效果"""
-        # 简单实现，如果未定义hover色则保持原色
-        return color
+    def create_text_link(self, parent, text, cmd):
+        """创建文本链接样式的按钮"""
+        btn = tk.Button(parent, text=text, command=cmd, bg='white', fg=self.colors['primary'], 
+                       font=self.fonts['body'], relief='flat', cursor='hand2')
+        btn.bind('<Enter>', lambda e: btn.config(fg=self.colors['primary_hover']))
+        btn.bind('<Leave>', lambda e: btn.config(fg=self.colors['primary']))
+        return btn
 
-    def _lighten_color(self, color):
-        """将颜色变亮用于悬停效果"""
-        # 简单实现，查找对应的 hover 颜色
-        for key, value in self.colors.items():
-            if value == color and f"{key}_hover" in self.colors:
-                return self.colors[f"{key}_hover"]
-        return color
-
-    def draw_netguard_logo(self, canvas, cx, cy, size):
-        """绘制 NetGuard Logo - 扁平化设计"""
-        import math
-
-        # 品牌色
-        primary = self.colors['primary']
-        secondary = self.colors['info']
-        accent = self.colors['warning']
-        light = '#FFFFFF'
-        dark = '#111827'
-
-        # 1. 绘制盾牌外框 - 简化为圆润的盾牌
-        shield_points = []
-        for angle in range(180, 361, 10):
-            rad = math.radians(angle)
-            x = cx + size * 0.8 * math.cos(rad)
-            y = cy - size * 0.2 + size * 0.6 * math.sin(rad)
-            shield_points.extend([x, y])
-        shield_points.extend([cx, cy + size * 1.0]) # 尖端
-        for angle in range(0, 181, 10):
-            rad = math.radians(angle)
-            x = cx + size * 0.8 * math.cos(rad)
-            y = cy - size * 0.2 + size * 0.6 * math.sin(rad)
-            shield_points.extend([x, y])
-
-        canvas.create_polygon(shield_points, fill=primary, outline='', width=0)
-
-        # 2. 绘制内部符号 - 更简洁的端口标志
-        # 冒号
-        canvas.create_text(cx - size * 0.2, cy, text=":",
-                          fill=light, font=('Consolas', int(size * 0.5), 'bold'))
-        # 斜杠
-        canvas.create_text(cx + size * 0.1, cy, text="//",
-                          fill=light, font=('Consolas', int(size * 0.45), 'bold'))
-
-    def log_message(self, message, tag="normal", scroll=True):
-        """在结果框中添加消息 - 优化性能"""
-        self.log_buffer.append((message, tag))
-        
-        # 检查当前滚动位置
-        # yview 返回 (start, end)，end == 1.0 表示在最底部
-        pos = self.result_text.yview()
-        is_at_bottom = pos[1] >= 0.98
-        
-        self.result_text.insert(tk.END, message + "\n", tag)
-        
-        if scroll:
-            self._trim_log_lines()
-            # 只有在底部时才执行 see(tk.END)，避免干扰用户手动滚动
-            if is_at_bottom:
-                self.result_text.see(tk.END)
-
-    def _trim_log_lines(self):
-        """清理多余的日志行 - 分批清理以减少计算量"""
-        try:
-            # 只有在超过 MAX_LOG_LINES 50行以上时才一次性清理，避免频繁删除
-            current_count = int(self.result_text.index('end-1c').split('.')[0])
-            if current_count > MAX_LOG_LINES + 50:
-                # 保留最新的 MAX_LOG_LINES 行
-                self.result_text.delete('1.0', f'{(current_count - MAX_LOG_LINES)}.0')
-        except Exception:
-            pass
-
-    def batch_log_messages(self, messages, batch_size=50, interval=5):
-        """
-        分片批量插入日志，彻底解决大量数据插入导致的卡顿问题
-        """
-        if hasattr(self, '_batch_job') and self._batch_job:
-            self.root.after_cancel(self._batch_job)
-            self._batch_job = None
-
-        if not messages:
-            return
-
-        total = len(messages)
-        # 记录开始时的位置
-        pos = self.result_text.yview()
-        is_at_bottom = pos[1] >= 0.95
-        
-        def _process_chunk(start_index):
-            end_index = min(start_index + batch_size, total)
-            chunk = messages[start_index:end_index]
-            
-            for text, tag in chunk:
-                self.result_text.insert(tk.END, text + "\n", tag)
-                self.log_buffer.append((text, tag))
-            
-            if end_index >= total:
-                self._trim_log_lines()
-                if is_at_bottom:
-                    self.result_text.see(tk.END)
-                
-                current_status = self.status_var.get()
-                if "..." in current_status:
-                    self.update_status(current_status.replace("...", "") + " (显示完成)")
-                self._batch_job = None
-            else:
-                self._batch_job = self.root.after(interval, lambda: _process_chunk(end_index))
-
-        _process_chunk(0)
-
-    def clear_results(self):
-        """清空结果 - 同时取消正在进行的批量任务"""
-        if hasattr(self, '_batch_job') and self._batch_job:
-            self.root.after_cancel(self._batch_job)
-            self._batch_job = None
-            
-        self.result_text.delete(1.0, tk.END)
-        self.log_buffer.clear()
-
-    def update_status(self, status):
-        """更新状态栏 - 简化图标逻辑"""
-        self.status_var.set(status)
-
-    def validate_port(self, port_str):
-        """验证端口号"""
-        try:
-            port = int(port_str)
-            if 1 <= port <= 65535:
-                return port
-            else:
-                messagebox.showerror("错误", "端口号必须在1-65535之间")
-                return None
-        except ValueError:
-            messagebox.showerror("错误", "请输入有效的端口号")
-            return None
-
-    def parse_port_range(self, port_str):
-        """解析端口范围 - 返回None时错误信息通过after显示"""
-        port_str = port_str.strip()
-        if '-' in port_str:
-            try:
-                start, end = port_str.split('-', 1)
-                start_port = int(start.strip())
-                end_port = int(end.strip())
-                if 1 <= start_port <= 65535 and 1 <= end_port <= 65535:
-                    return (start_port, end_port)
-                else:
-                    self.root.after(0, lambda: messagebox.showerror("错误", "端口号必须在1-65535之间"))
-                    return None
-            except ValueError:
-                self.root.after(0, lambda: messagebox.showerror("错误", "端口范围格式错误，请使用如: 8000-9000"))
-                return None
+    def start_monitoring_selected(self):
+        """快捷操作：监控表格选中的端口"""
+        sel = self.tree.selection()
+        if sel:
+            port = self.tree.item(sel[0], "values")[0]
+            self.port_var.set(port)
+            self.start_monitoring()
         else:
-            try:
-                port = int(port_str)
-                if 1 <= port <= 65535:
-                    return (port, port)
-                else:
-                    self.root.after(0, lambda: messagebox.showerror("错误", "端口号必须在1-65535之间"))
-                    return None
-            except ValueError:
-                self.root.after(0, lambda: messagebox.showerror("错误", "请输入有效的端口号"))
-                return None
+            messagebox.showinfo("提示", "请先在表格中选中要监控的行")
+
+    def copy_port_selected(self):
+        """快捷操作：复制表格选中的端口"""
+        sel = self.tree.selection()
+        port = self.tree.item(sel[0], "values")[0] if sel else self.port_var.get().strip()
+        if port:
+            self.root.clipboard_clear()
+            self.root.clipboard_append(port)
+            self.update_status(f"已复制端口: {port}")
+        else:
+            messagebox.showinfo("提示", "没有可复制的端口")
+
+    # --- 辅助 UI 函数 ---
+    def create_card(self, parent, title):
+        outer = tk.Frame(parent, bg=self.colors['border'], padx=1, pady=1)
+        outer.pack(fill="x", pady=(0, 20))
+        inner = tk.Frame(outer, bg='white', padx=25, pady=25)
+        inner.pack(fill="both", expand=True)
+        tk.Label(inner, text=title, font=self.fonts['h2'], bg='white', fg=self.colors['text']).pack(anchor="w", pady=(0,15))
+        tk.Frame(inner, bg=self.colors['border'], height=1).pack(fill="x", pady=(0,15))
+        return inner
+
+    def create_btn(self, parent, text, cmd, color):
+        btn = tk.Button(parent, text=text, command=cmd, bg=color, fg='white', font=self.fonts['body'], relief='flat', cursor='hand2', pady=10)
+        return btn
+
+    def create_top_btn(self, parent, text, cmd):
+        return tk.Button(parent, text=text, command=cmd, bg='white', fg=self.colors['text_secondary'], font=self.fonts['body'], relief='flat', cursor='hand2')
+
+    def log_message(self, msg, tag="info"):
+        self.result_text.insert(tk.END, f"[{datetime.now().strftime('%H:%M:%S')}] {msg}\n", tag)
+        self.result_text.see(tk.END)
+
+    # --- 核心逻辑 ---
+    def refresh_all(self):
+        self.status_var.set("正在扫描全量网络端口...")
+        threading.Thread(target=self._refresh_worker, daemon=True).start()
+
+    def _refresh_worker(self):
+        try:
+            res = subprocess.run(['netstat', '-ano'], capture_output=True, text=True, encoding='gbk')
+            lines = res.stdout.splitlines()
+            data, seen = [], set()
+            for line in lines:
+                parts = line.split()
+                if len(parts) >= 5 and ('LISTENING' in line or 'ESTABLISHED' in line):
+                    local = parts[1]
+                    port = local.split(':')[-1]
+                    pid = parts[4]
+                    if (port, pid) in seen: continue
+                    seen.add((port, pid))
+                    p_info = self._get_proc_cached(pid)
+                    data.append({'port': port, 'pid': pid, 'name': p_info['name'], 'address': local, 'remote': parts[2], 'status': parts[3]})
+            self.root.after(0, lambda: self._render_tree(data))
+        except Exception as e:
+            self.root.after(0, lambda: self.log_message(f"刷新失败: {e}", "error"))
+
+    def _render_tree(self, data):
+        self.all_ports_data = data
+        self._update_port_tags(data)
+        target = self.port_var.get().strip()
+        if target: self._apply_smart_filter(target)
+        else: self._exec_filter()
+
+    def _update_port_tags(self, data):
+        for w in self.tag_container.winfo_children(): w.destroy()
+        ports = sorted(list(set(d['port'] for d in data)), key=lambda x: int(x) if x.isdigit() else 0)
+        row_f = None
+        for i, p in enumerate(ports):
+            if i % 4 == 0: row_f = tk.Frame(self.tag_container, bg='white'); row_f.pack(fill="x")
+            is_sel = p in self.selected_ports_tags
+            tk.Button(row_f, text=p, font=('Arial', 8), relief="flat", cursor="hand2", padx=6, pady=2,
+                      bg=("#DBEAFE" if is_sel else "#F3F4F6"), fg=("#2563EB" if is_sel else "#6B7280"),
+                      command=lambda x=p: self._toggle_tag(x)).pack(side="left", padx=2, pady=2)
+
+    def _toggle_tag(self, p):
+        if p in self.selected_ports_tags: self.selected_ports_tags.remove(p)
+        else: self.selected_ports_tags.add(p)
+        self.port_var.set(", ".join(sorted(list(self.selected_ports_tags), key=lambda x: int(x) if x.isdigit() else 0)))
+        self._render_tree(self.all_ports_data)
+
+    def _apply_smart_filter(self, target_str):
+        target_ports = set()
+        try:
+            parts = target_str.replace('，', ',').split(',')
+            for part in parts:
+                part = part.strip()
+                if not part: continue
+                if '-' in part:
+                    s, e = map(int, part.split('-'))
+                    target_ports.update(range(s, e + 1))
+                else: target_ports.add(int(part))
+        except:
+            self.search_var.set(target_str); self._exec_filter(); return
+
+        for item in self.tree.get_children(): self.tree.delete(item)
+        match = [d for d in self.all_ports_data if d['port'].isdigit() and int(d['port']) in target_ports]
+        for d in sorted(match, key=lambda x: int(x['port'])):
+            self.tree.insert("", tk.END, values=(d['port'], d['pid'], d['name'], d['address'], d['remote'], d['status']))
+        self.status_var.set(f"筛选结果: {len(match)} 个项目")
 
     def query_port(self):
-        """查询指定端口或端口范围"""
-        port_str = self.port_entry.get().strip()
-        if not port_str:
-            messagebox.showwarning("警告", "请输入端口号")
-            return
+        p = self.port_var.get().strip()
+        self.add_to_history(p)
+        self.refresh_all()
 
-        port_range = self.parse_port_range(port_str)
-        if port_range is None:
-            return
+    def _exec_filter(self):
+        k = self.search_var.get().lower()
+        for item in self.tree.get_children(): self.tree.delete(item)
+        match = [d for d in self.all_ports_data if not k or k in d['port'] or k in d['pid'] or k in d['name'].lower()]
+        for d in sorted(match, key=lambda x: int(x['port'])):
+            self.tree.insert("", tk.END, values=(d['port'], d['pid'], d['name'], d['address'], d['remote'], d['status']))
+        self.status_var.set(f"发现 {len(match)} 个活跃端口")
 
-        start_port, end_port = port_range
-        
-        # 如果是单个端口，保存到历史记录
-        if start_port == end_port:
-            self.add_to_history(str(start_port))
+    def on_search(self, e=None):
+        if hasattr(self, '_sj'): self.root.after_cancel(self._sj)
+        self._sj = self.root.after(300, self._exec_filter)
 
-        # 在新线程中执行查询
-        threading.Thread(target=self._query_port_thread, args=(start_port, end_port), daemon=True).start()
+    def _get_selected_pids(self):
+        pids = [self.tree.item(i, "values")[1] for i in self.tree.selection()]
+        if not pids and self.pid_entry.get(): pids = [self.pid_entry.get().strip()]
+        return list(set(pids))
 
-    def _query_port_thread(self, start_port, end_port):
-        """在线程中查询端口 - 批量更新UI以提高性能"""
-        # 在主线程清空结果
-        self.root.after(0, self.clear_results)
-        
-        if start_port == end_port:
-            self.root.after(0, lambda: self.update_status(f"正在查询端口 {start_port}..."))
-            self.root.after(0, lambda: self.log_message(f"查询端口 {start_port}", "header"))
+    def extract_pid_manual(self):
+        pids = self._get_selected_pids()
+        if pids:
+            self.pid_entry.delete(0, tk.END)
+            self.pid_entry.insert(0, pids[0])
+            self.update_status(f"已提取 PID: {pids[0]}")
         else:
-            self.root.after(0, lambda: self.update_status(f"正在查询端口范围 {start_port}-{end_port}..."))
-            self.root.after(0, lambda: self.log_message(f"查询端口范围 {start_port}-{end_port}", "header"))
-        
-        self.root.after(0, lambda: self.log_message("─" * 60, "header"))
-
-        try:
-            # 使用 netstat 查询端口 - 使用更高效的参数
-            result = subprocess.run(['netstat', '-ano'], capture_output=True, text=True, encoding='gbk', timeout=10)
-            if result.returncode == 0:
-                lines = result.stdout.split('\n')
-                found = False
-                current_pids = []
-                
-                # 收集所有匹配的结果，最后统一更新
-                all_results_msg = []
-
-                for line in lines:
-                    # 检查是否匹配端口范围
-                    for port in range(start_port, end_port + 1):
-                        port_pattern = f':{port}'
-                        if port_pattern in line and ('LISTENING' in line or 'ESTABLISHED' in line):
-                            found = True
-                            parts = line.split()
-                            if len(parts) >= 5:
-                                local_address = parts[1]
-                                foreign_address = parts[2]
-                                state = parts[3]
-                                pid = parts[4]
-
-                                try:
-                                    int(pid)
-                                    if pid not in current_pids:
-                                        current_pids.append(pid)
-                                except ValueError:
-                                    continue
-
-                                # 收集进程信息
-                                process_info = self._get_process_info_cached(pid)
-                                info_msg = [
-                                    (f"本地地址: {local_address}", "info"),
-                                    (f"远程地址: {foreign_address}", "normal"),
-                                    (f"连接状态: {state}", "normal"),
-                                    (f"进程PID: ", "info"),
-                                    (f"{pid}", "pid"),
-                                ]
-                                
-                                if process_info:
-                                    info_msg.append((f"进程名称: {process_info['name']}", "warning"))
-                                    info_msg.append((f"进程路径: {process_info['exe']}", "normal"))
-                                    info_msg.append((f"命令行: {process_info['cmdline']}", "normal"))
-                                else:
-                                    info_msg.append(("无法获取进程详细信息", "error"))
-                                
-                                info_msg.append(("─" * 60, "info"))
-                                all_results_msg.append(info_msg)
-                            break
-
-                # 批量将结果发送到主线程
-                def batch_update(results, pids, is_found):
-                    # 清空表格
-                    for item in self.tree.get_children():
-                        self.tree.delete(item)
-                    
-                    # 将查询结果解析并插入表格
-                    # results 结构是: [[(text, tag), ...], ...]
-                    # 这比较尴尬，因为之前的 structure 是为了 log 设计的。
-                    # 但我们还有 self.current_pids 和上面的解析逻辑。
-                    # 为了简单，我们只从 raw lines 重新构建 data，或者我们只插入 pids。
-                    # 更好的方式是：在 _query_port_thread 中直接构建结构化数据。
-                    
-                    # 这里为了最小改动，我们暂时只在日志框显示详细信息，
-                    # 但如果在表格中显示会更好。
-                    # 让我们用一种变通方法：如果 current_pids 存在，我们尝试重新获取 info 并插入表格。
-                    
-                    if is_found:
-                        for pid in pids:
-                             process_info = self._get_process_info_cached(pid)
-                             p_name = process_info['name'] if process_info else "Unknown"
-                             
-                             # 由于 _query_port_thread 的原始 loop 比较复杂，
-                             # 这里简单地把找到的 PID 放入表格。
-                             # 注意：这里丢失了 local_address 等信息，如果需要显示，
-                             # 应该在 _query_port_thread 内部收集 structured_data。
-                             
-                             # 暂时方案：只在 Log 中显示详情，表格显示简略信息
-                             self.tree.insert("", tk.END, values=("Target", pid, p_name, "-", "-", "OCCUPIED"))
-
-                    # 使用 batch_log_messages (现在指向底部日志框) 显示详细文本日志
-                    flat_msgs = []
-                    for msg_group in results:
-                        for text, tag in msg_group:
-                            flat_msgs.append((text, tag))
-                    self.batch_log_messages(flat_msgs, batch_size=50)
-                    
-                    self.current_pids = pids
-                    if not is_found:
-                        if start_port == end_port:
-                            self.log_message(f"端口 {start_port} 当前未被占用", "success")
-                            self.update_status(f"端口 {start_port} 未被占用")
-                        else:
-                            self.log_message(f"端口范围 {start_port}-{end_port} 内没有端口被占用", "success")
-                            self.update_status(f"端口范围内没有端口被占用")
-                    else:
-                        self.update_status(f"查询完成 - 找到 {len(pids)} 个进程")
-                        if pids:
-                            self.pid_entry.delete(0, tk.END)
-                            self.pid_entry.insert(0, pids[0])
-
-                self.root.after(0, lambda: batch_update(all_results_msg, current_pids, found))
-                
-            else:
-                self.root.after(0, lambda: self.log_message("查询失败: " + result.stderr, "error"))
-                self.root.after(0, lambda: self.update_status("查询失败"))
-
-        except subprocess.TimeoutExpired:
-            self.root.after(0, lambda: self.log_message("查询超时，请重试", "error"))
-            self.root.after(0, lambda: self.update_status("查询超时"))
-        except Exception as e:
-            self.root.after(0, lambda: self.log_message(f"查询出错: {str(e)}", "error"))
-            self.root.after(0, lambda: self.update_status("查询出错"))
-
-    def _get_process_info_cached(self, pid):
-        """获取进程信息 - 带缓存优化"""
-        current_time = time.time()
-
-        # 检查缓存是否有效
-        if pid in self._process_cache:
-            cache_entry = self._process_cache[pid]
-            if current_time - cache_entry['timestamp'] < self._cache_ttl:
-                return cache_entry['data']
-
-        try:
-            process = psutil.Process(int(pid))
-            info = {
-                'name': process.name(),
-                'exe': process.exe(),
-                'cmdline': ' '.join(process.cmdline())
-            }
-
-            # 更新缓存
-            self._process_cache[pid] = {
-                'data': info,
-                'timestamp': current_time
-            }
-            return info
-        except (psutil.NoSuchProcess, psutil.AccessDenied):
-            return None
-
-    def kill_process(self):
-        """终止占用端口的进程"""
-        port_str = self.port_entry.get().strip()
-        if not port_str:
-            messagebox.showwarning("警告", "请先查询端口")
-            return
-
-        port_range = self.parse_port_range(port_str)
-        if port_range is None:
-            return
-
-        start_port, end_port = port_range
-
-        if not messagebox.askyesno("确认", f"确定要终止占用端口 {start_port if start_port == end_port else f'{start_port}-{end_port}'} 的进程吗？\n\n注意：这可能会导致相关应用程序异常退出！"):
-            return
-
-        threading.Thread(target=self._kill_process_thread, args=(start_port, end_port), daemon=True).start()
-
-    def _kill_process_thread(self, start_port, end_port):
-        """在线程中终止进程 - 优化性能"""
-        self.clear_results()
-        
-        if start_port == end_port:
-            self.update_status(f"正在终止占用端口 {start_port} 的进程...")
-            self.log_message(f"终止端口 {start_port} 进程", "header")
-        else:
-            self.update_status(f"正在终止端口范围 {start_port}-{end_port} 的进程...")
-            self.log_message(f"终止端口范围 {start_port}-{end_port} 进程", "header")
-        
-        self.log_message("─" * 60, "header")
-
-        try:
-            result = subprocess.run(['netstat', '-ano'], capture_output=True, text=True, encoding='gbk', timeout=10)
-            if result.returncode == 0:
-                lines = result.stdout.split('\n')
-                pids = set()
-
-                for line in lines:
-                    for port in range(start_port, end_port + 1):
-                        port_pattern = f':{port}'
-                        if port_pattern in line and ('LISTENING' in line or 'ESTABLISHED' in line):
-                            parts = line.split()
-                            if len(parts) >= 5:
-                                pid = parts[4]
-                                try:
-                                    int(pid)
-                                    pids.add(pid)
-                                except ValueError:
-                                    continue
-                            break
-
-                if not pids:
-                    if start_port == end_port:
-                        self.log_message(f"端口 {start_port} 当前未被占用", "info")
-                        self.update_status(f"端口 {start_port} 未被占用")
-                    else:
-                        self.log_message(f"端口范围 {start_port}-{end_port} 内没有端口被占用", "info")
-                        self.update_status(f"端口范围内没有端口被占用")
-                    return
-
-                for pid in pids:
-                    self._terminate_process(pid)
-
-                # 验证端口是否已释放
-                self.log_message("\n正在验证端口是否已释放...", "info")
-                time.sleep(1)
-
-                result2 = subprocess.run(['netstat', '-ano'], capture_output=True, text=True, encoding='gbk', timeout=10)
-                if result2.returncode == 0:
-                    lines2 = result2.stdout.split('\n')
-                    still_occupied = False
-                    for port in range(start_port, end_port + 1):
-                        port_pattern = f':{port}'
-                        if any(port_pattern in line and ('LISTENING' in line or 'ESTABLISHED' in line) for line in lines2):
-                            still_occupied = True
-                            break
-
-                    if still_occupied:
-                        self.log_message(f"警告: 端口仍被占用，可能需要重启相关服务", "error")
-                    else:
-                        self.log_message(f"端口已成功释放", "success")
-
-                self.update_status("终止操作完成")
-            else:
-                self.log_message("查询端口失败: " + result.stderr, "error")
-                self.update_status("终止操作失败")
-
-        except subprocess.TimeoutExpired:
-            self.log_message("操作超时，请重试", "error")
-            self.update_status("操作超时")
-        except Exception as e:
-            self.log_message(f"终止进程时出错: {str(e)}", "error")
-            self.update_status("终止操作出错")
-
-    def _terminate_process(self, pid):
-        """终止单个进程 - 线程安全版本"""
-        try:
-            process = psutil.Process(int(pid))
-            process_name = process.name()
-            self.root.after(0, lambda: self.log_message(f"正在终止进程: {process_name} (PID: {pid})"))
-
-            process.terminate()
-
-            try:
-                process.wait(timeout=5)
-                self.root.after(0, lambda: self.log_message(f"进程 {process_name} (PID: {pid}) 已成功终止", "success"))
-            except psutil.TimeoutExpired:
-                self.root.after(0, lambda: self.log_message(f"正常终止失败，正在强制终止进程 {process_name} (PID: {pid})", "info"))
-                process.kill()
-                process.wait(timeout=3)
-                self.root.after(0, lambda: self.log_message(f"进程 {process_name} (PID: {pid}) 已强制终止", "success"))
-
-        except (psutil.NoSuchProcess, psutil.AccessDenied) as e:
-            self.root.after(0, lambda: self.log_message(f"无法终止进程 PID {pid}: {str(e)}", "error"))
-        except Exception as e:
-            self.root.after(0, lambda: self.log_message(f"终止进程 PID {pid} 时出错: {str(e)}", "error"))
-
-    def refresh_all(self):
-        """刷新显示所有监听端口"""
-        threading.Thread(target=self._refresh_all_thread, daemon=True).start()
-
-    def _refresh_all_thread(self):
-        """在线程中刷新所有端口 - 优化性能，减少UI回调次数"""
-        self.root.after(0, self.clear_results)
-        self.root.after(0, lambda: self.update_status("正在获取所有端口信息..."))
-        self.root.after(0, lambda: self.log_message("刷新 所有监听端口列表", "header"))
-        self.root.after(0, lambda: self.log_message("─" * 60, "header"))
-
-        try:
-            result = subprocess.run(['netstat', '-ano'], capture_output=True, text=True, encoding='gbk', timeout=10)
-            if result.returncode == 0:
-                lines = result.stdout.split('\n')
-                seen = set()  # 用于去重
-                listening_ports = []
-                all_ports_data = []  # 存储用于搜索的数据
-
-                for line in lines:
-                    if not line.strip() or line.startswith('TCP') or line.startswith('UDP'):
-                        continue
-
-                    if 'LISTENING' in line:
-                        parts = line.split()
-                        if len(parts) >= 5 and parts[4]:
-                            pid = parts[4]
-                            local_address = parts[1]
-
-                            if ':' in local_address:
-                                port = local_address.split(':')[-1]
-                                try:
-                                    port_num = int(port)
-                                    if 1 <= port_num <= 65535:
-                                        # 使用 (port, pid) 作为唯一键去重
-                                        key = (port, pid)
-                                        if key not in seen:
-                                            seen.add(key)
-                                            listening_ports.append((port, local_address, pid))
-                                            
-                                            # 获取进程信息用于搜索
-                                            process_info = self._get_process_info_cached(pid)
-                                            all_ports_data.append({
-                                                'port': port,
-                                                'pid': pid,
-                                                'address': local_address,
-                                                'name': process_info['name'] if process_info else '[无法获取]'
-                                            })
-                                except ValueError:
-                                    continue
-
-                def update_ui(ports, data):
-                    self.all_ports_data = data
-                    # 1. 清空旧数据
-                    for item in self.tree.get_children():
-                        self.tree.delete(item)
-                    
-                    if ports:
-                        ports.sort(key=lambda x: int(x[0]) if x[0].isdigit() else 999999)
-                        
-                        # 构建表格数据
-                        for port, address, pid in ports:
-                            # 从 data 中找已获取的信息
-                            p_info = next((d for d in data if d['port'] == port and d['pid'] == pid), None)
-                            
-                            p_name = p_info['name'] if p_info else "[无法获取]"
-                            local_addr = address
-                            remote_addr = p_info.get('remote', 'N/A') if p_info else 'N/A'
-                            status = p_info.get('status', 'LISTENING') if p_info else 'LISTENING'
-                            
-                            self.tree.insert("", tk.END, values=(port, pid, p_name, local_addr, remote_addr, status))
-                            
-                        self.log_message(f"刷新完成: 找到 {len(ports)} 个监听端口", "success")
-                    else:
-                        self.log_message("当前没有监听的端口", "info")
-                    
-                    self.update_status(f"刷新完成 - 共 {len(ports)} 个监听端口")
-
-                self.root.after(0, lambda: update_ui(listening_ports, all_ports_data))
-            else:
-                self.root.after(0, lambda: self.log_message("获取端口信息失败: " + result.stderr, "error"))
-                self.root.after(0, lambda: self.update_status("刷新失败"))
-
-        except subprocess.TimeoutExpired:
-            self.root.after(0, lambda: self.log_message("刷新超时，请重试", "error"))
-            self.root.after(0, lambda: self.update_status("刷新超时"))
-        except Exception as e:
-            self.root.after(0, lambda: self.log_message(f"刷新时出错: {str(e)}", "error"))
-            self.root.after(0, lambda: self.update_status("刷新出错"))
-
-    def on_search(self, event=None):
-        """搜索框内容变化时触发 - 增加防抖处理"""
-        if hasattr(self, '_search_timer'):
-            self.root.after_cancel(self._search_timer)
-        self._search_timer = self.root.after(300, self.filter_ports)
-
-    def clear_search(self):
-        """清除搜索"""
-        self.search_var.set('')
-        self.filter_ports()
-
-    def filter_ports(self):
-        """根据搜索关键词过滤端口 - 更新表格"""
-        keyword = self.search_var.get().strip().lower()
-        
-        # 1. 清空表格
-        for item in self.tree.get_children():
-            self.tree.delete(item)
-
-        # 2. 筛选并插入
-        matching_count = 0
-        for data in self.all_ports_data:
-            if not keyword or (keyword in str(data['port']).lower() or 
-                               keyword in str(data['pid']).lower() or 
-                               keyword in str(data['name']).lower()):
-                
-                values = (
-                    data['port'],
-                    data['pid'],
-                    data['name'],
-                    data.get('address', 'N/A'),
-                    data.get('remote', 'N/A'),
-                    data.get('status', 'LISTENING')
-                )
-                self.tree.insert("", tk.END, values=values)
-                matching_count += 1
-
-        if keyword:
-            self.update_status(f"搜索结果: {matching_count} 个项目")
-        else:
-            self.update_status(f"显示所有: {matching_count} 个项目")
-
-    def export_results(self):
-        """导出结果到文件"""
-        try:
-            # 获取当前结果文本
-            content = self.result_text.get(1.0, tk.END)
-            
-            if not content.strip():
-                messagebox.showwarning("警告", "没有可导出的内容")
-                return
-
-            # 选择保存路径
-            file_path = filedialog.asksaveasfilename(
-                defaultextension=".txt",
-                filetypes=[("文本文件", "*.txt"), ("所有文件", "*.*")],
-                title="导出结果"
-            )
-
-            if file_path:
-                with open(file_path, 'w', encoding='utf-8') as f:
-                    f.write(content)
-                self.update_status(f"结果已导出到: {file_path}")
-                self.log_message(f"\n结果已导出到: {file_path}", "success")
-                messagebox.showinfo("导出成功", f"结果已成功导出到:\n{file_path}")
-
-        except Exception as e:
-            messagebox.showerror("导出失败", f"导出时出错: {str(e)}")
-            self.update_status("导出失败")
-
-    def show_process_details_dialog(self):
-        """显示进程详细信息弹窗"""
-        pid_str = self.pid_entry.get().strip()
-        if not pid_str:
-            messagebox.showwarning("警告", "请先输入PID")
-            return
-
-        try:
-            pid = int(pid_str)
-        except ValueError:
-            messagebox.showerror("错误", "请输入有效的PID数字")
-            return
-
-        try:
-            process = psutil.Process(pid)
-            
-            # 创建详细信息弹窗
-            dialog = tk.Toplevel(self.root)
-            dialog.title(f"进程详情 - PID {pid}")
-            dialog.geometry("500x600")
-            dialog.resizable(True, True)
-            dialog.configure(bg=self.colors['card_bg'])
-            dialog.transient(self.root)
-            dialog.grab_set()
-
-            # 居中显示
-            dialog.update_idletasks()
-            x = (dialog.winfo_screenwidth() // 2) - (dialog.winfo_width() // 2)
-            y = (dialog.winfo_screenheight() // 2) - (dialog.winfo_height() // 2)
-            dialog.geometry(f'+{x}+{y}')
-
-            # 标题
-            title = tk.Label(dialog, text=f"进程详细信息", 
-                           font=('SF Pro Display', 18, 'bold'),
-                           fg=self.colors['text'], bg=self.colors['card_bg'])
-            title.pack(pady=(20, 10))
-
-            # 信息框架
-            info_frame = tk.Frame(dialog, bg=self.colors['card_bg'])
-            info_frame.pack(fill=tk.BOTH, expand=True, padx=20, pady=10)
-
-            # 获取详细信息
-            details = [
-                ("PID", str(pid)),
-                ("名称", process.name()),
-                ("可执行文件", process.exe()),
-                ("命令行", ' '.join(process.cmdline())),
-                ("创建时间", datetime.fromtimestamp(process.create_time()).strftime('%Y-%m-%d %H:%M:%S')),
-                ("状态", process.status()),
-                ("CPU 使用率", f"{process.cpu_percent(interval=0.1):.1f}%"),
-                ("内存使用", f"{process.memory_info().rss / 1024 / 1024:.2f} MB"),
-                ("线程数", str(process.num_threads())),
-                ("父进程", str(process.ppid())),
-            ]
-
-            for label, value in details:
-                row = tk.Frame(info_frame, bg=self.colors['card_bg'])
-                row.pack(fill=tk.X, pady=5)
-                
-                lbl = tk.Label(row, text=f"{label}:", 
-                             font=('SF Pro Text', 12, 'bold'),
-                             fg=self.colors['text_secondary'], bg=self.colors['card_bg'],
-                             width=12, anchor='w')
-                lbl.pack(side=tk.LEFT)
-                
-                val = tk.Label(row, text=value, 
-                             font=('SF Pro Text', 12),
-                             fg=self.colors['text'], bg=self.colors['card_bg'],
-                             wraplength=350, anchor='w')
-                val.pack(side=tk.LEFT, fill=tk.X, expand=True)
-
-            # 按钮
-            btn_frame = tk.Frame(dialog, bg=self.colors['card_bg'])
-            btn_frame.pack(pady=20)
-            
-            close_btn = tk.Button(btn_frame, text="关闭", 
-                                command=dialog.destroy,
-                                bg=self.colors['primary'], fg='white',
-                                font=('SF Pro Text', 12),
-                                relief='flat', cursor='hand2',
-                                padx=30, pady=8)
-            close_btn.pack()
-
-        except psutil.NoSuchProcess:
-            messagebox.showerror("错误", f"进程 PID {pid} 不存在")
-        except psutil.AccessDenied:
-            messagebox.showerror("错误", f"无法访问进程 PID {pid} 的信息")
-        except Exception as e:
-            messagebox.showerror("错误", f"获取进程信息时出错: {str(e)}")
-
-    def extract_pid(self):
-        """提取当前查询到的PID"""
-        if self.current_pids:
-            if len(self.current_pids) == 1:
-                self.pid_entry.delete(0, tk.END)
-                self.pid_entry.insert(0, self.current_pids[0])
-                self.update_status(f"已提取PID: {self.current_pids[0]}")
-            else:
-                self.show_pid_selection_dialog()
-        else:
-            messagebox.showwarning("警告", "请先查询端口获取PID")
-            self.update_status("没有可提取的PID")
-
-    def show_pid_selection_dialog(self):
-        """显示PID选择对话框"""
-        dialog = tk.Toplevel(self.root)
-        dialog.title("选择PID")
-        dialog.geometry("400x300")
-        dialog.resizable(True, True)
-        dialog.configure(bg=self.colors['card_bg'])
-
-        dialog.update_idletasks()
-        x = (dialog.winfo_screenwidth() // 2) - (dialog.winfo_width() // 2)
-        y = (dialog.winfo_screenheight() // 2) - (dialog.winfo_height() // 2)
-        dialog.geometry(f'+{x}+{y}')
-
-        ttk.Label(dialog, text="找到多个PID，请选择要操作的目标:", padding="10").pack()
-
-        list_frame = ttk.Frame(dialog)
-        list_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=(0, 10))
-
-        scrollbar = ttk.Scrollbar(list_frame)
-        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
-
-        pid_listbox = tk.Listbox(list_frame, yscrollcommand=scrollbar.set, font=('SF Mono', 11))
-        pid_listbox.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-        scrollbar.config(command=pid_listbox.yview)
-
-        for i, pid in enumerate(self.current_pids):
-            process_info = self._get_process_info_cached(pid)
-            if process_info:
-                pid_listbox.insert(tk.END, f"PID {pid} - {process_info['name']}")
-            else:
-                pid_listbox.insert(tk.END, f"PID {pid} - [未知进程]")
-
-        button_frame = ttk.Frame(dialog)
-        button_frame.pack(pady=10)
-
-        def select_pid():
-            selection = pid_listbox.curselection()
-            if selection:
-                index = selection[0]
-                selected_pid = self.current_pids[index]
-                self.pid_entry.delete(0, tk.END)
-                self.pid_entry.insert(0, selected_pid)
-                self.update_status(f"已选择PID: {selected_pid}")
-                dialog.destroy()
-
-        ttk.Button(button_frame, text="选择", command=select_pid).pack(side=tk.LEFT, padx=5)
-        ttk.Button(button_frame, text="取消", command=dialog.destroy).pack(side=tk.LEFT, padx=5)
+            messagebox.showinfo("提示", "请先在表格中选中一行")
 
     def kill_by_pid(self):
-        """根据PID直接杀掉进程 - 修复卡顿问题"""
-        pid_str = self.pid_entry.get().strip()
-        if not pid_str:
-            messagebox.showwarning("警告", "请输入PID")
-            return
+        targets = self._get_selected_pids()
+        if not targets or not messagebox.askyesno("终止进程", f"确定终止选中的 {len(targets)} 个进程吗？"): return
+        for pid in targets:
+            try: 
+                p = psutil.Process(int(pid))
+                n = p.name()
+                p.kill()
+                self.log_message(f"成功终止: {n} (PID: {pid})", "success")
+            except Exception as e: self.log_message(f"终止失败 {pid}: {e}", "error")
+        self.root.after(1500, self.refresh_all)
 
-        try:
-            pid = int(pid_str)
-        except ValueError:
-            messagebox.showerror("错误", "请输入有效的PID数字")
-            return
-
-        # 获取进程信息用于确认对话框
-        try:
-            process = psutil.Process(pid)
-            process_name = process.name()
-            confirm_msg = f"确定要终止进程 {process_name} (PID: {pid}) 吗？\n\n注意：这可能会导致相关应用程序异常退出！"
-        except (psutil.NoSuchProcess, psutil.AccessDenied):
-            confirm_msg = f"确定要终止进程 PID: {pid} 吗？\n\n注意：无法获取进程详细信息！"
-
-        # 使用after延迟执行确认对话框，避免阻塞UI
-        self.root.after(10, lambda: self._confirm_and_kill(pid, confirm_msg))
-
-    def _confirm_and_kill(self, pid, confirm_msg):
-        """显示确认对话框并执行终止"""
-        if messagebox.askyesno("确认", confirm_msg):
-            # 立即更新UI状态
-            self.update_status(f"正在终止进程 PID: {pid}...")
-            self.log_message(f"终止进程 PID: {pid}", "header")
-            self.log_message("─" * 60, "header")
-            # 启动后台线程执行终止操作
-            threading.Thread(target=self._kill_by_pid_thread, args=(pid,), daemon=True).start()
-
-    def _kill_by_pid_thread(self, pid):
-        """在线程中根据PID终止进程 - 只执行终止操作，UI更新在主线程完成"""
-        self._terminate_process(str(pid))
-
-        # 验证进程是否已终止
-        try:
-            psutil.Process(pid)
-            self.root.after(0, lambda: self.log_message("警告: 进程可能仍在运行", "error"))
-        except psutil.NoSuchProcess:
-            self.root.after(0, lambda: self.log_message("验证: 进程已成功终止", "success"))
-
-    def copy_pid(self):
-        """复制当前PID到剪贴板"""
-        pid_str = self.pid_entry.get().strip()
-        if not pid_str:
-            messagebox.showwarning("警告", "没有可复制的PID")
-            return
-
-        try:
-            self.root.clipboard_clear()
-            self.root.clipboard_append(pid_str)
-            self.update_status(f"PID {pid_str} 已复制到剪贴板")
-            self.log_message(f"PID {pid_str} 已复制到剪贴板", "success")
-        except Exception as e:
-            messagebox.showerror("错误", f"复制失败: {str(e)}")
-            self.update_status("复制失败")
-
-    def show_shortcuts(self):
-        """显示快捷键提示 - NetGuard 品牌版"""
-        shortcuts_text = """🛡️ NetGuard 快捷键指南
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-文件操作:
-Ctrl+E   - 导出查询结果
-Ctrl+Q   - 退出程序
-
-查询操作:
-Ctrl+R   - 刷新端口列表
-F5       - 刷新端口列表
-Enter    - 执行查询（在输入框中）
-
-导航操作:
-Ctrl+F   - 聚焦搜索框
-Esc      - 清除搜索内容
-
-帮助:
-F1       - 显示关于信息
-?        - 显示快捷键
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-提示: 所有快捷键在任意界面均可使用"""
-
-        messagebox.showinfo("NetGuard 快捷键", shortcuts_text)
-
-    def show_about(self):
-        """显示关于对话框 - NetGuard 品牌版"""
-        about_text = """🛡️ NetGuard 端口管理工具 v2.0
-
-守护网络端口安全
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-主要功能:
-• 🔍 端口占用查询（支持范围查询）
-• ⚡ PID快速操作
-• 🔧 进程管理
-• 📊 实时监控
-• 🌐 网络连接监控
-• 📜 端口历史记录
-• 💾 搜索结果导出
-• ℹ️ 进程详细信息查看
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-快捷键:
-• Ctrl+R / F5 - 刷新端口列表
-• Ctrl+Q - 退出程序
-• Ctrl+E - 导出结果
-• Ctrl+F - 聚焦搜索框
-• F1 - 显示关于信息
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-技术栈:
-• Python 3.x + Tkinter
-• psutil 进程和网络管理
-• 多线程实时监控
-• macOS 风格 UI 设计
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-⚠️ 安全提醒:
-使用前请了解相关进程的作用
-避免终止系统关键进程
-监控网络连接时请遵守相关法律法规
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-© 2024 NetGuard. All rights reserved."""
-
-        messagebox.showinfo("关于 NetGuard", about_text)
-
-    def load_port_history(self):
-        """加载端口历史记录"""
-        try:
-            if self.history_file.exists():
-                with open(self.history_file, 'r', encoding='utf-8') as f:
-                    return json.load(f)
-            return []
-        except Exception as e:
-            print(f"加载历史记录失败: {e}")
-            return []
-
-    def save_port_history(self):
-        """保存端口历史记录"""
-        try:
-            with open(self.history_file, 'w', encoding='utf-8') as f:
-                json.dump(self.port_history, f, ensure_ascii=False, indent=2)
-        except Exception as e:
-            print(f"保存历史记录失败: {e}")
-
-    def add_to_history(self, port):
-        """添加端口到历史记录"""
-        if port in self.port_history:
-            self.port_history.remove(port)
-
-        self.port_history.insert(0, port)
-
-        if len(self.port_history) > MAX_HISTORY:
-            self.port_history = self.port_history[:MAX_HISTORY]
-
-        self.port_combo['values'] = self.port_history
-        self.save_port_history()
-
-    def on_history_selected(self, event):
-        """历史记录选择事件 - 增加防抖"""
-        selected_port = self.history_var.get().strip()
-        if selected_port:
-            # 将选中的历史端口填入输入框
-            self.port_var.set(selected_port)
-            self.update_status(f"已选择历史端口: {selected_port}")
-            
-            # 取消之前的定时任务
-            if hasattr(self, '_history_timer'):
-                self.root.after_cancel(self._history_timer)
-            
-            # 延迟执行查询，避免频繁触发
-            self._history_timer = self.root.after(300, self.query_port)
-
-    def show_history_dialog(self):
-        """显示历史记录管理对话框"""
-        if not self.port_history:
-            messagebox.showinfo("历史记录", "当前没有历史记录")
-            return
-
-        dialog = tk.Toplevel(self.root)
-        dialog.title("端口历史记录")
-        dialog.geometry("400x500")
-        dialog.resizable(True, True)
-        dialog.transient(self.root)
-        dialog.grab_set()
-        dialog.configure(bg=self.colors['card_bg'])
-
-        dialog.update_idletasks()
-        x = (dialog.winfo_screenwidth() // 2) - (dialog.winfo_width() // 2)
-        y = (dialog.winfo_screenheight() // 2) - (dialog.winfo_height() // 2)
-        dialog.geometry(f'+{x}+{y}')
-
-        main_frame = ttk.Frame(dialog, padding="15")
-        main_frame.pack(fill=tk.BOTH, expand=True)
-
-        title_label = ttk.Label(main_frame, text="端口历史记录",
-                               font=('SF Pro Display', 16, 'bold'))
-        title_label.pack(pady=(0, 15))
-
-        list_frame = ttk.Frame(main_frame)
-        list_frame.pack(fill=tk.BOTH, expand=True, pady=(0, 15))
-
-        scrollbar = ttk.Scrollbar(list_frame)
-        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
-
-        history_listbox = tk.Listbox(list_frame, yscrollcommand=scrollbar.set,
-                                     font=('SF Mono', 12))
-        history_listbox.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-        scrollbar.config(command=history_listbox.yview)
-
-        for i, port in enumerate(self.port_history):
-            history_listbox.insert(tk.END, f"端口 {port}")
-            history_listbox.itemconfig(i, fg=self.colors['primary'])
-
-        button_frame = ttk.Frame(main_frame)
-        button_frame.pack(fill=tk.X)
-
-        def select_port():
-            selection = history_listbox.curselection()
-            if selection:
-                index = selection[0]
-                selected_port = self.port_history[index]
-                self.port_var.set(selected_port)
-                self.update_status(f"已选择历史端口: {selected_port}")
-                dialog.destroy()
-                self.query_port()
-
-        def delete_port():
-            selection = history_listbox.curselection()
-            if selection:
-                index = selection[0]
-                port_to_delete = self.port_history[index]
-
-                if messagebox.askyesno("确认删除", f"确定要删除端口 {port_to_delete} 的历史记录吗？"):
-                    self.port_history.pop(index)
-                    history_listbox.delete(index)
-                    self.port_combo['values'] = self.port_history
-                    self.save_port_history()
-                    self.update_status(f"已删除历史记录: {port_to_delete}")
-
-        def clear_all():
-            if messagebox.askyesno("确认清空", "确定要清空所有历史记录吗？"):
-                self.port_history.clear()
-                history_listbox.delete(0, tk.END)
-                self.port_combo['values'] = self.port_history
-                self.save_port_history()
-                self.update_status("已清空所有历史记录")
-
-        def close_dialog():
-            dialog.destroy()
-
-        ttk.Button(button_frame, text="选择并查询", command=select_port,
-                  style='Action.TButton', width=15).pack(side=tk.LEFT, padx=(0, 5))
-        ttk.Button(button_frame, text="删除选中", command=delete_port,
-                  style='Danger.TButton', width=15).pack(side=tk.LEFT, padx=(0, 5))
-        ttk.Button(button_frame, text="清空全部", command=clear_all,
-                  style='Warning.TButton', width=15).pack(side=tk.LEFT, padx=(0, 5))
-        ttk.Button(button_frame, text="关闭", command=close_dialog,
-                  width=10).pack(side=tk.RIGHT)
-
-        history_listbox.bind('<Double-Button-1>', lambda e: select_port())
+    def restart_process(self):
+        targets = self._get_selected_pids()
+        if not targets or not messagebox.askyesno("重启服务", f"确定重启选中的 {len(targets)} 个服务吗？"): return
+        for pid in targets:
+            try:
+                p = psutil.Process(int(pid))
+                cmd, cwd, name = p.cmdline(), p.cwd(), p.name()
+                p.kill()
+                time.sleep(0.5)
+                subprocess.Popen(cmd, cwd=cwd, creationflags=subprocess.CREATE_NEW_CONSOLE)
+                self.log_message(f"已重启服务: {name}", "success")
+            except Exception as e: self.log_message(f"重启失败 {pid}: {e}", "error")
+        self.root.after(2000, self.refresh_all)
 
     def start_monitoring(self):
-        """开始网络连接监控"""
-        if self.monitoring_active:
-            return
+        p = self.port_var.get().strip()
+        try:
+            tp = int(p.split(',')[0]) # 取第一个
+            self.monitoring_active = True
+            self.monitor_status_label.config(text=f"Live: {tp}", fg=self.colors['success'])
+            self.start_monitor_btn.config(state="disabled"); self.stop_monitor_btn.config(state="normal")
+            self.log_message(f"正在监控端口 {tp} 的异常连接...")
+            threading.Thread(target=self._monitor_loop, args=(tp,), daemon=True).start()
+        except: messagebox.showerror("错误", "监控需输入单个端口号")
 
-        port_str = self.port_var.get().strip()
-        if not port_str:
-            messagebox.showwarning("警告", "请先输入要监控的端口号")
-            return
-
-        # 解析端口
-        port_range = self.parse_port_range(port_str)
-        if port_range is None:
-            return
-        
-        start_port, end_port = port_range
-        if start_port != end_port:
-            messagebox.showwarning("警告", "监控功能只支持单个端口")
-            return
-        
-        port = start_port
-
-        self.monitoring_active = True
-        self.monitor_status_label.config(text="监控中", fg=self.colors['success'])
-        self.start_monitor_btn.config(state='disabled')
-        self.stop_monitor_btn.config(state='normal')
-        self.refresh_connections_btn.config(state='disabled')
-
-        self.monitor_thread = threading.Thread(target=self._monitor_connections, args=(port,), daemon=True)
-        self.monitor_thread.start()
-
-        self.log_message(f"开始监控端口 {port} 的网络连接", "info")
-        self.update_status(f"正在监控端口 {port} 的网络连接")
+    def _monitor_loop(self, port):
+        while self.monitoring_active:
+            try:
+                for c in psutil.net_connections():
+                    if c.laddr.port == port:
+                        r = f"{c.raddr.ip}:{c.raddr.port}" if c.raddr else "Local"
+                        msg = f"检测到连接: {r} -> PID {c.pid} [{c.status}]"
+                        self.root.after(0, lambda m=msg: self.log_message(m, "warning"))
+            except: pass
+            time.sleep(MONITOR_INTERVAL)
 
     def stop_monitoring(self):
-        """停止网络连接监控"""
-        if not self.monitoring_active:
-            return
-
         self.monitoring_active = False
-        self.monitor_status_label.config(text="未监控", fg=self.colors['text_tertiary'])
-        self.start_monitor_btn.config(state='normal')
-        self.stop_monitor_btn.config(state='disabled')
-        self.refresh_connections_btn.config(state='normal')
+        self.monitor_status_label.config(text="Idle", fg=self.colors['text_tertiary'])
+        self.start_monitor_btn.config(state="normal"); self.stop_monitor_btn.config(state="disabled")
 
-        self.log_message("网络连接监控已停止", "warning")
-        self.update_status("网络连接监控已停止")
+    def on_tree_select(self, e):
+        sel = self.tree.selection()
+        if not sel: return
+        v = self.tree.item(sel[0], "values")
+        self.pid_entry.delete(0, tk.END); self.pid_entry.insert(0, v[1])
 
-    def refresh_connections(self):
-        """手动刷新连接信息"""
-        port_str = self.port_var.get().strip()
-        if not port_str:
-            messagebox.showwarning("警告", "请先输入端口号")
-            return
+    def show_context_menu(self, e):
+        i = self.tree.identify_row(e.y)
+        if not i: return
+        self.tree.selection_set(i)
+        v = self.tree.item(i, "values")
+        m = tk.Menu(self.root, tearoff=0)
+        m.add_command(label="🚀 重启此服务", command=self.restart_process)
+        m.add_command(label="🛑 终止此进程", command=self.kill_by_pid, foreground="red")
+        m.add_separator()
+        m.add_command(label="🔍 监控此端口", command=lambda: [self.port_var.set(v[0]), self.start_monitoring()])
+        m.add_command(label="📊 性能详情", command=self.show_process_details_dialog)
+        m.add_separator()
+        m.add_command(label="📋 复制 PID", command=lambda: [self.root.clipboard_clear(), self.root.clipboard_append(v[1])])
+        m.add_command(label="📋 复制端口", command=lambda: [self.root.clipboard_clear(), self.root.clipboard_append(v[0])])
+        m.post(e.x_root, e.y_root)
 
-        port_range = self.parse_port_range(port_str)
-        if port_range is None:
-            return
-        
-        start_port, end_port = port_range
-        if start_port != end_port:
-            messagebox.showwarning("警告", "刷新连接功能只支持单个端口")
-            return
-
-        threading.Thread(target=self._get_connections_info, args=(start_port,), daemon=True).start()
-
-    def _monitor_connections(self, port):
-        """监控网络连接的主循环"""
-        try:
-            while self.monitoring_active:
-                self._get_connections_info(port)
-                time.sleep(MONITOR_INTERVAL)
-        except Exception as e:
-            self.log_message(f"监控出错: {str(e)}", "error")
-
-    def _get_connections_info(self, port):
-        """获取指定端口的连接信息 - 优化性能"""
-        try:
-            connections = []
-
-            # 使用psutil获取网络连接
-            for conn in psutil.net_connections():
-                if conn.laddr.port == port:
-                    local_ip = conn.laddr.ip
-                    local_port = conn.laddr.port
-                    status = conn.status
-                    pid = conn.pid
-
-                    remote_addr = "N/A"
-                    if conn.raddr:
-                        remote_addr = f"{conn.raddr.ip}:{conn.raddr.port}"
-
-                    process_name = "Unknown"
-                    if pid:
-                        process_info = self._get_process_info_cached(str(pid))
-                        if process_info:
-                            process_name = process_info['name']
-
-                    connections.append({
-                        'local_addr': f"{local_ip}:{local_port}",
-                        'remote_addr': remote_addr,
-                        'status': status,
-                        'pid': pid,
-                        'process_name': process_name
-                    })
-
-            self.current_connections = connections
-            self._display_connections(connections, port)
-
-        except Exception as e:
-            self.log_message(f"获取连接信息出错: {str(e)}", "error")
-
-    def _display_connections(self, connections, port):
-        """显示连接信息"""
-        self.root.after(0, self._update_connections_display, connections, port)
-
-    def _update_connections_display(self, connections, port):
-        """更新连接显示UI"""
-        self.connections_text.delete(1.0, tk.END)
-
-        timestamp = datetime.now().strftime("%H:%M:%S")
-        self.connections_text.insert(tk.END, f"端口 {port} 连接监控 - {timestamp}\n", "header")
-        self.connections_text.insert(tk.END, "─" * 50 + "\n", "header")
-
-        if not connections:
-            self.connections_text.insert(tk.END, f"端口 {port} 当前没有活动连接\n", "info")
+    def copy_pid(self):
+        """将当前输入的 PID 复制到剪贴板"""
+        pid = self.pid_entry.get().strip()
+        if pid:
+            self.root.clipboard_clear()
+            self.root.clipboard_append(pid)
+            self.log_message(f"PID {pid} 已成功复制到剪贴板", "success")
+            self.status_var.set(f"已复制 PID: {pid}")
         else:
-            self.connections_text.insert(tk.END, f"找到 {len(connections)} 个连接:\n\n", "info")
+            messagebox.showinfo("提示", "当前没有可复制的 PID")
 
-            for i, conn in enumerate(connections, 1):
-                self.connections_text.insert(tk.END, f"连接 #{i}\n", "highlight")
-                self.connections_text.insert(tk.END, f"本地地址: {conn['local_addr']}\n", "info")
-                self.connections_text.insert(tk.END, f"远程地址: {conn['remote_addr']}\n", "info")
-                self.connections_text.insert(tk.END, f"连接状态: {conn['status']}\n", "info")
+    def show_process_details_dialog(self):
+        pid_s = self.pid_entry.get().strip()
+        if not pid_s: return
+        try:
+            pid = int(pid_s)
+            p = psutil.Process(pid)
+            d = tk.Toplevel(self.root); d.title(f"PID {pid} 详情"); d.geometry("500x600"); d.configure(bg='white')
+            tk.Label(d, text="进程实时指标", font=self.fonts['h1'], bg='white', fg=self.colors['primary']).pack(pady=20)
+            f = tk.Frame(d, bg='white', padx=30); f.pack(fill="both")
+            items = [("进程名", p.name()), ("状态", p.status()), ("CPU", f"{p.cpu_percent(0.1)}%"), 
+                     ("内存", f"{p.memory_info().rss/1024/1024:.2f} MB"), ("路径", p.exe()), ("命令", " ".join(p.cmdline()))]
+            for l, v in items:
+                r = tk.Frame(f, bg='white', pady=5); r.pack(fill="x")
+                tk.Label(r, text=f"{l}:", font=self.fonts['h2'], bg='white', width=10, anchor="w").pack(side="left")
+                tk.Label(r, text=v, font=self.fonts['body'], bg='white', wraplength=350, justify="left").pack(side="left")
+            tk.Button(d, text="关闭", command=d.destroy, bg=self.colors['primary'], fg='white', relief="flat", padx=30, pady=8).pack(pady=20)
+        except: messagebox.showerror("错误", "无法访问该进程")
 
-                if conn['pid']:
-                    self.connections_text.insert(tk.END, f"进程PID: {conn['pid']}\n", "info")
-                    self.connections_text.insert(tk.END, f"进程名称: {conn['process_name']}\n", "warning")
-                else:
-                    self.connections_text.insert(tk.END, f"进程PID: [系统进程]\n", "warning")
+    def sort_tree(self, col, rev):
+        l = [(self.tree.set(k, col), k) for k in self.tree.get_children('')]
+        try: l.sort(key=lambda t: int(t[0]) if t[0].isdigit() else t[0], reverse=rev)
+        except: l.sort(reverse=rev)
+        for i, (v, k) in enumerate(l): self.tree.move(k, '', i)
+        self.tree.heading(col, command=lambda: self.sort_tree(col, not rev))
 
-                self.connections_text.insert(tk.END, "─" * 40 + "\n", "info")
+    def load_port_history(self):
+        try:
+            if self.history_file.exists():
+                with open(self.history_file, 'r') as f: return json.load(f)
+        except: pass
+        return []
 
-    def on_closing(self):
-        """窗口关闭时的清理工作"""
-        if self.monitoring_active:
-            self.monitoring_active = False
+    def add_to_history(self, p):
+        if not p or p in self.port_history: return
+        self.port_history.insert(0, p); self.port_history = self.port_history[:MAX_HISTORY]
+        try:
+            with open(self.history_file, 'w') as f: json.dump(self.port_history, f)
+            self.port_entry['values'] = self.port_history
+        except: pass
 
-        self.root.destroy()
+    def export_results(self):
+        path = filedialog.asksaveasfilename(defaultextension=".txt")
+        if not path: return
+        with open(path, 'w', encoding='utf-8') as f:
+            for i in self.tree.get_children(): f.write(str(self.tree.item(i, "values")) + "\n")
+        messagebox.showinfo("成功", "数据已成功导出")
 
-def main():
-    """主函数"""
-    root = tk.Tk()
-    app = PortManagerGUI(root)
-
-    # 居中显示窗口
-    root.update_idletasks()
-    width = root.winfo_width()
-    height = root.winfo_height()
-    x = (root.winfo_screenwidth() // 2) - (width // 2)
-    y = (root.winfo_screenheight() // 2) - (height // 2)
-    root.geometry(f'{width}x{height}+{x}+{y}')
-
-    root.mainloop()
+    def show_shortcuts(self): messagebox.showinfo("快捷键说明", "F5: 刷新列表\nCtrl+F: 快速搜索\nDouble Click: 查看进程详情\nRight Click: 快捷管理菜单")
+    def show_about(self): messagebox.showinfo("关于 NetGuard", "NetGuard Pro v3.5\n由 Gemini AI 深度优化\n打造最流畅的 Windows 端口管理体验")
+    def update_status(self, s): self.status_var.set(s)
+    def _get_proc_cached(self, pid):
+        now = time.time()
+        if pid in self._process_cache:
+            e = self._process_cache[pid]
+            if now - e['t'] < self._cache_ttl: return e['d']
+        try:
+            p = psutil.Process(int(pid)); d = {'name': p.name()}
+        except: d = {'name': '[Unknown]'}
+        self._process_cache[pid] = {'d': d, 't': now}; return d
+    def on_closing(self): self.root.destroy()
 
 if __name__ == "__main__":
-    main()
+    root = tk.Tk(); app = PortManagerGUI(root); root.mainloop()
