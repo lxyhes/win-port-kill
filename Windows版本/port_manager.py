@@ -388,6 +388,19 @@ class PortManagerGUI:
         btn.bind('<Leave>', lambda e: btn.config(bg=color))
         return btn
 
+    def _lighten_color(self, color):
+        """颜色亮度调节辅助函数"""
+        # 针对当前 UI 配色的悬停亮度映射
+        cmap = {
+            self.colors['primary']: '#3B82F6',   # 亮蓝
+            self.colors['success']: '#34D399',   # 亮绿
+            self.colors['danger']: '#F87171',    # 亮红
+            self.colors['info']: '#60A5FA',      # 亮天蓝
+            self.colors['warning']: '#FBBF24',   # 亮橙
+            '#F3F4F6': '#DBEAFE'                 # 浅灰变浅蓝
+        }
+        return cmap.get(color, color)
+
     def create_text_link(self, parent, text, cmd):
         """创建文本链接样式的按钮"""
         btn = tk.Button(parent, text=text, command=cmd, bg='white', fg=self.colors['primary'], 
