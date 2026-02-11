@@ -58,6 +58,12 @@ class PortManagerGUI:
         # 自定义标签组配置
         self.groups_file = Path("port_groups.json")
         self.custom_groups = self.load_custom_groups()
+        
+        # 脚本管理配置
+        self.scripts_file = Path("scripts_config.json")
+        self.saved_scripts = self.load_scripts_config()
+        self.running_scripts = {} # 存储 {path: subprocess.Popen}
+
         # 如果是首次运行，初始化默认组
         if not self.custom_groups:
             self.custom_groups = {
@@ -86,6 +92,22 @@ class PortManagerGUI:
                 json.dump(self.custom_groups, f, ensure_ascii=False, indent=2)
         except Exception as e:
             print(f"Save groups error: {e}")
+
+    def load_scripts_config(self):
+        """加载保存的脚本列表"""
+        try:
+            if self.scripts_file.exists():
+                with open(self.scripts_file, 'r', encoding='utf-8') as f:
+                    return json.load(f)
+        except: pass
+        return []
+
+    def save_scripts_config(self):
+        """保存脚本列表"""
+        try:
+            with open(self.scripts_file, 'w', encoding='utf-8') as f:
+                json.dump(self.saved_scripts, f, ensure_ascii=False, indent=2)
+        except: pass
 
     def setup_styles(self):
         style = ttk.Style()
@@ -187,8 +209,16 @@ class PortManagerGUI:
         right_panel.pack(side="right", fill="both", expand=True)
         right_panel.config(highlightbackground=self.colors['border'])
 
-        # 搜索与过滤
-        s_bar = tk.Frame(right_panel, bg='white', height=65)
+        # 引入 Notebook 标签页 (主视图切换)
+        self.notebook = ttk.Notebook(right_panel)
+        self.notebook.pack(fill="both", expand=True, padx=0, pady=0)
+
+        # --- 选项卡 1: 端口管理 ---
+        self.port_tab = tk.Frame(self.notebook, bg='white')
+        self.notebook.add(self.port_tab, text="  🌐 端口与进程管理  ")
+
+        # 1.1 搜索与过滤
+        s_bar = tk.Frame(self.port_tab, bg='white', height=65)
         s_bar.pack(fill="x", padx=30, pady=(20, 10))
         tk.Label(s_bar, text="🔍", font=self.fonts['icon'], bg='white').pack(side="left")
         self.search_var = tk.StringVar()
@@ -196,43 +226,74 @@ class PortManagerGUI:
         self.search_entry.pack(side="left", fill="x", expand=True, padx=15, ipady=10)
         self.search_entry.bind('<KeyRelease>', self.on_search)
 
-        # --- 新增: 快捷操作工具栏 ---
-        actions_bar = tk.Frame(right_panel, bg='white', height=50)
+        # 1.2 快捷操作工具栏
+        actions_bar = tk.Frame(self.port_tab, bg='white', height=50)
         actions_bar.pack(fill="x", padx=30, pady=(0, 15))
-        
-        # 1. 重启服务
         self.create_action_btn(actions_bar, "🚀 重启服务", self.restart_process, self.colors['success']).pack(side="left", padx=(0, 10))
-        # 2. 终止进程
         self.create_action_btn(actions_bar, "🛑 终止进程", self.kill_by_pid, self.colors['danger']).pack(side="left", padx=10)
-        # 3. 性能详情
         self.create_action_btn(actions_bar, "📊 性能详情", self.show_process_details_dialog, self.colors['info']).pack(side="left", padx=10)
-        # 4. 开启监控
         self.create_action_btn(actions_bar, "🔍 开启监控", self.start_monitoring_selected, self.colors['warning']).pack(side="left", padx=10)
-        
-        # 5. 复制组 (小按钮)
         tk.Frame(actions_bar, bg=self.colors['border'], width=1).pack(side="left", fill="y", padx=15)
         self.create_text_link(actions_bar, "📋 复制PID", self.copy_pid).pack(side="left", padx=5)
         self.create_text_link(actions_bar, "📋 复制端口", self.copy_port_selected).pack(side="left", padx=5)
 
-        # 表格视图
-        tree_f = tk.Frame(right_panel, bg='white')
-        tree_f.pack(fill="both", expand=True, padx=30)
+        # 1.3 表格视图
+        tree_f = tk.Frame(self.port_tab, bg='white')
+        tree_f.pack(fill="both", expand=True, padx=30, pady=(0, 20))
         cols = ("port", "pid", "name", "local", "remote", "status")
         self.tree = ttk.Treeview(tree_f, columns=cols, show="headings", selectmode="extended")
         for col, head, w in [("port", "端口", 100), ("pid", "PID", 100), ("name", "进程名称", 280), ("local", "本地地址", 220), ("remote", "远程地址", 220), ("status", "状态", 130)]:
             self.tree.heading(col, text=head, anchor="w", command=lambda c=col: self.sort_tree(c, False))
             self.tree.column(col, width=w)
-        
         vsb = ttk.Scrollbar(tree_f, orient="vertical", command=self.tree.yview)
         self.tree.configure(yscrollcommand=vsb.set)
         self.tree.pack(side="left", fill="both", expand=True)
         vsb.pack(side="right", fill="y")
-        
         self.tree.bind("<<TreeviewSelect>>", self.on_tree_select)
         self.tree.bind("<Button-3>", self.show_context_menu)
         self.tree.bind("<Double-1>", lambda e: self.show_process_details_dialog())
 
-        # 底部日志反馈
+        # --- 选项卡 2: 脚本管理 ---
+        self.script_tab = tk.Frame(self.notebook, bg='white')
+        self.notebook.add(self.script_tab, text="  📜 脚本管理中心  ")
+        
+        # 2.1 脚本页头部
+        s_head = tk.Frame(self.script_tab, bg='white', padx=30, pady=30)
+        s_head.pack(fill="x")
+        tk.Label(s_head, text="📜 BAT/CMD 脚本自动化管理", font=self.fonts['h1'], bg='white', fg=self.colors['text']).pack(side="left")
+        self.create_action_btn(s_head, "➕ 添加新脚本", self.add_script_dialog, self.colors['primary']).pack(side="right")
+
+        # 2.2 脚本管理主体 (表格 + 操作栏)
+        s_main = tk.Frame(self.script_tab, bg='white', padx=30)
+        s_main.pack(fill="both", expand=True)
+        
+        # 脚本表格
+        s_tree_f = tk.Frame(s_main, bg='white')
+        s_tree_f.pack(fill="both", expand=True)
+        self.script_tree = ttk.Treeview(s_tree_f, columns=("name", "path", "status"), show="headings", height=15)
+        self.script_tree.heading("name", text="脚本名称"); self.script_tree.column("name", width=200)
+        self.script_tree.heading("path", text="文件路径"); self.script_tree.column("path", width=450)
+        self.script_tree.heading("status", text="当前状态"); self.script_tree.column("status", width=120)
+        
+        s_vsb = ttk.Scrollbar(s_tree_f, orient="vertical", command=self.script_tree.yview)
+        self.script_tree.configure(yscrollcommand=s_vsb.set)
+        self.script_tree.pack(side="left", fill="both", expand=True)
+        s_vsb.pack(side="right", fill="y")
+        
+        self.script_tree.bind("<Button-3>", self.show_script_context_menu)
+        self.script_tree.bind("<Double-1>", lambda e: self.run_selected_script())
+
+        # 2.3 脚本底部操作条
+        s_ops = tk.Frame(s_main, bg='#F9FAFB', pady=20)
+        s_ops.pack(fill="x", pady=20)
+        self.create_action_btn(s_ops, "🚀 启动选中脚本", self.run_selected_script, self.colors['success']).pack(side="left", padx=(20, 10))
+        self.create_action_btn(s_ops, "🛑 强制停止脚本", self.stop_selected_script, self.colors['danger']).pack(side="left", padx=10)
+        tk.Label(s_ops, text="|", font=self.fonts['h2'], fg=self.colors['border'], bg='#F9FAFB').pack(side="left", padx=10)
+        self.create_text_link(s_ops, "📂 打开目录", self.open_script_folder).pack(side="left", padx=10)
+        self.create_text_link(s_ops, "📝 编辑脚本", self.edit_script).pack(side="left", padx=10)
+        tk.Button(s_ops, text="🗑️ 从列表中移除", font=self.fonts['body'], bg='#F9FAFB', fg=self.colors['danger'], relief="flat", command=self.remove_selected_script).pack(side="right", padx=20)
+
+        # 底部日志反馈 (全局)
         self.status_var = tk.StringVar(value="就绪")
         fb_f = tk.Frame(right_panel, bg="#F9FAFB", height=150)
         fb_f.pack(fill="x")
@@ -249,6 +310,113 @@ class PortManagerGUI:
         self.root.bind('<Control-f>', lambda e: self.search_entry.focus_set())
         self.root.protocol("WM_DELETE_WINDOW", self.on_closing)
         self.refresh_all()
+        self.render_scripts_list()
+
+    def show_script_context_menu(self, e):
+        """脚本列表右键菜单"""
+        i = self.script_tree.identify_row(e.y)
+        if not i: return
+        self.script_tree.selection_set(i)
+        m = tk.Menu(self.root, tearoff=0)
+        m.add_command(label="🚀 启动脚本", command=self.run_selected_script)
+        m.add_command(label="🛑 停止脚本", command=self.stop_selected_script)
+        m.add_separator()
+        m.add_command(label="📂 打开所在文件夹", command=self.open_script_folder)
+        m.add_command(label="📝 编辑脚本", command=self.edit_script)
+        m.add_separator()
+        m.add_command(label="🗑️ 从列表中移除", command=self.remove_selected_script)
+        m.post(e.x_root, e.y_root)
+
+    def open_script_folder(self):
+        sel = self.script_tree.selection()
+        if not sel: return
+        path = self.script_tree.item(sel[0], "tags")[0]
+        os.startfile(os.path.dirname(path))
+
+    def edit_script(self):
+        sel = self.script_tree.selection()
+        if not sel: return
+        path = self.script_tree.item(sel[0], "tags")[0]
+        os.startfile(path, 'edit')
+
+    # --- 脚本管理逻辑 (新增) ---
+    def render_scripts_list(self):
+        """刷新脚本列表显示"""
+        if not hasattr(self, 'script_tree'): return
+        for i in self.script_tree.get_children(): self.script_tree.delete(i)
+        for path in self.saved_scripts:
+            name = Path(path).name
+            status = "运行中" if path in self.running_scripts and self.running_scripts[path].poll() is None else "已停止"
+            self.script_tree.insert("", "end", values=(name, path, status), tags=(path,))
+        
+        # 每3秒自动更新一次状态
+        if hasattr(self, '_script_timer'): self.root.after_cancel(self._script_timer)
+        self._script_timer = self.root.after(3000, self.render_scripts_list)
+
+    def add_script_dialog(self):
+        """弹出文件对话框添加脚本"""
+        files = filedialog.askopenfilenames(title="选择 BAT 或 CMD 脚本", filetypes=[("Windows 脚本", "*.bat *.cmd"), ("所有文件", "*.*")])
+        if files:
+            for f in files:
+                if f not in self.saved_scripts:
+                    self.saved_scripts.append(f)
+            self.save_scripts_config()
+            self.render_scripts_list()
+            self.log_message(f"已添加 {len(files)} 个脚本到管理列表", "success")
+
+    def run_selected_script(self):
+        """运行选中的脚本"""
+        sel = self.script_tree.selection()
+        if not sel: return messagebox.showinfo("提示", "请先选中要运行的脚本")
+        
+        path = self.script_tree.item(sel[0], "tags")[0]
+        if path in self.running_scripts and self.running_scripts[path].poll() is None:
+            return messagebox.showwarning("提示", "该脚本已经在运行中")
+            
+        try:
+            # 使用 CREATE_NEW_CONSOLE 在新窗口中运行，方便用户交互和查看输出
+            proc = subprocess.Popen(path, cwd=str(Path(path).parent), creationflags=subprocess.CREATE_NEW_CONSOLE)
+            self.running_scripts[path] = proc
+            self.render_scripts_list()
+            self.log_message(f"脚本已启动: {Path(path).name} (PID: {proc.pid})", "success")
+        except Exception as e:
+            self.log_message(f"启动脚本失败: {e}", "error")
+
+    def stop_selected_script(self):
+        """停止选中的脚本进程及其所有关联窗口"""
+        sel = self.script_tree.selection()
+        if not sel: return
+        
+        path = self.script_tree.item(sel[0], "tags")[0]
+        if path in self.running_scripts:
+            proc = self.running_scripts[path]
+            if proc.poll() is None:
+                try:
+                    # 使用 taskkill /T (进程树) /F (强制) 来确保窗口和子进程全部关闭
+                    subprocess.run(['taskkill', '/F', '/T', '/PID', str(proc.pid)], 
+                                 capture_output=True, creationflags=subprocess.CREATE_NO_WINDOW)
+                    self.log_message(f"已强制停止脚本并关闭窗口: {Path(path).name}", "warning")
+                except Exception as e:
+                    self.log_message(f"停止脚本失败: {e}", "error")
+            del self.running_scripts[path]
+            self.render_scripts_list()
+        else:
+            messagebox.showinfo("提示", "该脚本当前未通过管理器运行")
+
+    def remove_selected_script(self):
+        """从列表中移除脚本"""
+        sel = self.script_tree.selection()
+        if not sel: return
+        
+        path = self.script_tree.item(sel[0], "tags")[0]
+        if path in self.running_scripts and self.running_scripts[path].poll() is None:
+            if not messagebox.askyesno("确认", "脚本正在运行，确定要移除并停止它吗？"):
+                return
+            self.stop_selected_script()
+            
+        self.saved_scripts.remove(path)
+        self.save_scripts_config()
+        self.render_scripts_list()
 
     # --- 自定义标签组逻辑 ---
     def render_custom_groups(self):
@@ -695,7 +863,10 @@ class PortManagerGUI:
             p = psutil.Process(int(pid)); d = {'name': p.name()}
         except: d = {'name': '[Unknown]'}
         self._process_cache[pid] = {'d': d, 't': now}; return d
-    def on_closing(self): self.root.destroy()
+    def on_closing(self):
+        self.monitoring_active = False
+        if hasattr(self, '_script_timer'): self.root.after_cancel(self._script_timer)
+        self.root.destroy()
 
 if __name__ == "__main__":
     root = tk.Tk(); app = PortManagerGUI(root); root.mainloop()
